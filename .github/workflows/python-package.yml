@@ -49,5 +49,5 @@ jobs:
       uses: actions/upload-artifact@v3
       with:
         name: pytest-coverage-report
-        path: ${{ github.workspace }}/htmlcov/*
+        path: ${{ github.workspace }}/htmlcov/*.*
 
