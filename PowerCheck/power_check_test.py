@@ -20,7 +20,7 @@ def test_make_packet_for_expected_structure():
 @pytest.mark.byte_tests
 def test_process_packet_applies_format():
     unit = power_check.PowerCheck(port='/any/port')
-    values = unit._processs_packet('<BHI', 0x80, b'\x80\x12\x34\x56\x78\x9A\xBC\xDE')
+    values = unit._process_packet('<BHI', 0x80, b'\x80\x12\x34\x56\x78\x9A\xBC\xDE')
     assert values == (0x12, 0x5634, 0xDEBC9A78)
 
 # Test for process packet working with each structure and sample messages.
@@ -40,7 +40,7 @@ def test_send_nack(code: int, expect: bytes):
 
 @pytest.mark.byte_tests
 def test_packet_handshake_sequence(mocker):
-    mock_make = mocker.patch('power_check2.PowerCheck._make_packet')
+    mock_make = mocker.patch('power_check.PowerCheck._make_packet')
     unit = power_check.PowerCheck(port=None)
     unit._ser.read_all.return_value = b'\x80\x05\xf2\x01\x02\x03\x0b'
     packet_type = 0xf1
@@ -53,21 +53,21 @@ def test_packet_handshake_sequence(mocker):
 @pytest.mark.byte_tests
 def test_get_config_uses_correct_arguments(mocker):
     """This just makes sure the packet types and formats are matched."""
-    mock_handshake = mocker.patch('power_check2.PowerCheck._packet_handshake')
+    mock_handshake = mocker.patch('power_check.PowerCheck._packet_handshake')
     unit = power_check.PowerCheck(port=None).get_config()
     mock_handshake.assert_called_once_with(
         0xa4, power_check.PowerCheck.CONFIG_FMT, power_check.PowerCheck.Config)
 
 @pytest.mark.byte_tests
 def test_get_status_uses_correct_arguments(mocker):
-    mock_handshake = mocker.patch('power_check2.PowerCheck._packet_handshake')
+    mock_handshake = mocker.patch('power_check.PowerCheck._packet_handshake')
     unit = power_check.PowerCheck(port=None).get_status()
     mock_handshake.assert_called_once_with(
         0xa0, power_check.PowerCheck.STATUS_FMT, power_check.PowerCheck.Status)
 
 @pytest.mark.byte_tests  
 def test_get_unit_info_uses_correct_arguments(mocker):
-    mock_handshake = mocker.patch('power_check2.PowerCheck._packet_handshake')
+    mock_handshake = mocker.patch('power_check.PowerCheck._packet_handshake')
     unit = power_check.PowerCheck(port=None).get_unit_info()
     mock_handshake.assert_called_once_with(
         0xf1, power_check.PowerCheck.UNIT_INFO_FMT, power_check.PowerCheck.UnitInfo)
@@ -75,10 +75,10 @@ def test_get_unit_info_uses_correct_arguments(mocker):
 def test_stream_status(mocker):
     status_packet = power_check.PowerCheck.Status(
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
-    mock_status = mocker.patch('power_check2.PowerCheck.get_status',
+    mock_status = mocker.patch('power_check.PowerCheck.get_status',
                                return_value=status_packet)
-    mock_time = mocker.patch('power_check2.time.time', return_value=1)
-    mock_sleep = mocker.patch('power_check2.time.sleep')
+    mock_time = mocker.patch('power_check.time.time', return_value=1)
+    mock_sleep = mocker.patch('power_check.time.sleep')
     unit = power_check.PowerCheck(port=None)
     unit._monitor_file = mock.Mock()
     stream_values_expected = 2
