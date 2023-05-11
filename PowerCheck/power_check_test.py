@@ -3,7 +3,7 @@ import power_check
 import pytest
 
 # Mock out serial for all tests since we won't talk to HW.
-@pytest.fixture(scope='session', autouse=True)
+@pytest.fixture(autouse=True)
 def serial_mock():
     with mock.patch.object(power_check.serial, 'Serial') as _fixture:
         yield _fixture
@@ -20,8 +20,10 @@ def test_make_packet_for_expected_structure():
 @pytest.mark.byte_tests
 def test_process_packet_applies_format():
     unit = power_check.PowerCheck(port='/any/port')
-    values = unit._process_packet('<BHI', 0x80, b'\x80\x12\x34\x56\x78\x9A\xBC\xDE')
-    assert values == (0x12, 0x5634, 0xDEBC9A78)
+    sample_packet = power_check.PowerCheck.PacketInfo(
+        type=0xed, payload=b'\x12\x34\x56\x78\x9a\xbc\xde')
+    values = unit._process_packet('<BHI', sample_packet)
+    assert values == (0x12, 0x5634, 0xdebc9a78)
 
 # Test for process packet working with each structure and sample messages.
 
@@ -41,8 +43,9 @@ def test_send_nack(code: int, expect: bytes):
 @pytest.mark.byte_tests
 def test_packet_handshake_sequence(mocker):
     mock_make = mocker.patch('power_check.PowerCheck._make_packet')
+    mock_read_one = mocker.patch('power_check.PowerCheck._read_one_packet')
     unit = power_check.PowerCheck(port=None)
-    unit._ser.read_all.return_value = b'\x80\x05\xf2\x01\x02\x03\x0b'
+    mock_read_one.return_value = power_check.PowerCheck.PacketInfo(type=0xf2, payload=b'\x01\x02\x03')
     packet_type = 0xf1
     packet_fmt = unit.UNIT_INFO_FMT
     packet_class = unit.UnitInfo
@@ -72,9 +75,59 @@ def test_get_unit_info_uses_correct_arguments(mocker):
     mock_handshake.assert_called_once_with(
         0xf1, power_check.PowerCheck.UNIT_INFO_FMT, power_check.PowerCheck.UnitInfo)
     
+@pytest.mark.byte_tests  
+def test_set_config_makes_correct_packet_one_setting(mocker):
+    mock_packet = mocker.patch('power_check.PowerCheck._make_packet')
+    unit = power_check.PowerCheck(port=None)
+    unit._last_config = power_check.PowerCheck.Config(*range(13))
+    unit.set_config(log_interval_s=10)
+    # The payload is constructed to match the Config object, using the range input
+    # values. The start of each field can be seen in the message below, except the
+    # log_interval_s, which is overwritten in the set_config command.
+    expected_payload = (b'\x00\x0a\x02\x00\x00\x00\x03\x00\x00\x00\x04\x00\x00\x00'
+                        b'\x05\x00\x00\x00\x06\x07\x00\x00\x00\x08\x00\x00\x00\x09\x00\x00\x00'
+                        b'\x0a\x00\x00\x00\x0b\x0c\x00' + 9 * b'\x00')
+    assert mock_packet.call_args_list[0] == mock.call(0xa6, expected_payload)
+
+@pytest.mark.byte_tests  
+def test_set_config_makes_correct_packet_multi_settings(mocker):
+    mock_packet = mocker.patch('power_check.PowerCheck._make_packet')
+    unit = power_check.PowerCheck(port=None)
+    unit._last_config = power_check.PowerCheck.Config(*range(13))
+    unit.set_config(backlight_timeout_s=33, max_ma_hrs=0x11223344)
+    # The payload is constructed to match the Config object, using the range input
+    # values. The start of each field can be seen in the message below, except the
+    # fields provided. Note also the bytes are little endian.
+    expected_payload = (b'\x21\x01\x02\x00\x00\x00\x03\x00\x00\x00\x04\x00\x00\x00'
+                        b'\x44\x33\x22\x11\x06\x07\x00\x00\x00\x08\x00\x00\x00\x09\x00\x00\x00'
+                        b'\x0a\x00\x00\x00\x0b\x0c\x00' + 9 * b'\x00')
+    assert mock_packet.call_args_list[0] == mock.call(0xa6, expected_payload)
+ 
+@pytest.mark.byte_tests
+def test_clear_log_sends_proper_message():
+    unit = power_check.PowerCheck(port=None)
+    unit.clear_log_data()
+    unit._ser.write.assert_called_with(b'\x80\x03\xa8\x40\xeb')
+
+@pytest.mark.byte_tests
+def test_dump_eeprom(mocker):
+    mock_read_one = mocker.patch('power_check.PowerCheck._read_one_packet')
+    mock_read_one.side_effect = (
+        power_check.PowerCheck.PacketInfo(0xa3, b'\x44\x33\x22\x11\x40\x30\x20\x10'),
+        power_check.PowerCheck.PacketInfo(0xa3, b'')
+    )
+    expect = [(0x11223344, 0x10203040)]
+    unit = power_check.PowerCheck(port=None)
+    results = unit.dump_eeprom()
+    calls = unit._ser.write.call_args_list
+    # Confirm message to start dump of data.
+    assert calls[0] == mock.call(b'\x80\x02\xa2\xa4')
+    # Confirm an accept and complete per transmission.
+    assert calls[1:] == 2 * [mock.call(unit._nack_packet(0)), mock.call(unit._nack_packet(1))]
+    assert results == expect
+
 def test_stream_status(mocker):
-    status_packet = power_check.PowerCheck.Status(
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
+    status_packet = power_check.PowerCheck.Status(*range(13))
     mock_status = mocker.patch('power_check.PowerCheck.get_status',
                                return_value=status_packet)
     mock_time = mocker.patch('power_check.time.time', return_value=1)
@@ -86,3 +139,46 @@ def test_stream_status(mocker):
     unit.stream_status(stream_sleep, stream_values_expected)
     assert unit._monitor_file.write.call_count == stream_values_expected
     mock_sleep.assert_has_calls(2 * [mock.call(stream_sleep)])
+
+def test_config_property_returns_last_config():
+    unit = power_check.PowerCheck(port=None)
+    config = power_check.PowerCheck.Config(*range(13))
+    unit._last_config = config
+    assert unit.config == config
+
+def test_status_property_returns_last_status():
+    unit = power_check.PowerCheck(port=None)
+    status = power_check.PowerCheck.Status(*range(13))
+    unit._last_status = status
+    assert unit.status == status
+
+def test_unit_info_property_returns_last_unit_info():
+    unit = power_check.PowerCheck(port=None)
+    info = power_check.PowerCheck.UnitInfo(1, 2, 3)
+    unit._unit_info = info
+    assert unit.unit_info == info
+
+@pytest.mark.parametrize(
+    'property, func_to_call', [
+        ('config', 'get_config'),
+        ('status', 'get_status'),
+        ('unit_info', 'get_unit_info')
+    ]
+)
+def test_config_property_requests_config_if_none(mocker, property, func_to_call):
+    unit = power_check.PowerCheck(port=None)
+    mock_func = mocker.patch('power_check.PowerCheck.' + func_to_call)
+    _unused_property = getattr(unit, property)
+    mock_func.assert_called_once()
+
+@pytest.mark.parametrize(
+    'file_or_directory, is_file', [
+        ('./', False),  # In this case the file will be autonamed, no format required.
+        ('./test.txt', True),
+    ]
+)
+def test_status_file_opens_correctly(mocker, file_or_directory, is_file):
+    mock_open = mocker.patch('builtins.open')
+    unit = power_check.PowerCheck(port=None)
+    unit.set_status_file(file_or_directory)
+    assert mock_open.call_args[0][0].startswith(file_or_directory)
