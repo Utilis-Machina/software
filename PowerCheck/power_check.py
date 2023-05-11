@@ -342,7 +342,7 @@ class PowerCheck:
         time.sleep(NACK_SLEEP)
         accept = self._read_one_packet()  # Read acceptance.
         complete = self._read_one_packet()  # Read complete.
-        if accept == 0 and complete == 1:
+        if accept.payload == 0 and complete.payload == 1:
             # If the packet was accepted and completed update cached config.
             self._last_config = new_config
 
@@ -405,5 +405,3 @@ class PowerCheck:
         time.sleep(NACK_SLEEP)
         accept = self._read_one_packet()  # Acceptance of command.
         complete = self._read_one_packet()  # Completion of command.
-        if accept != 0 and complete != 1:
-            raise ValueError('Reset command not accepted.')
