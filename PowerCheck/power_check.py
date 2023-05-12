@@ -67,8 +67,10 @@ class PowerCheck:
     # General byte packet structure.
     PacketInfo = collections.namedtuple('PacketInfo', ['type', 'payload'])
 
-    # The byte mapping and fields for the config message.
-    CONFIG_FMT = '<BBIIIIBiiiiBH'
+    # The byte mapping and fields for the config message. The config
+    # message can be sent in two different formats, but the longer
+    # one is used here, though not much is done with the display.
+    CONFIG_FMT = '<BBIIIIBiiiiBHHHHHHHHHHBB'
     Config = collections.namedtuple('Config', [
         'backlight_timeout_s',  # Values: 1-240, 0 no timeout.
         'log_interval_s',  # Values: 1-120, 0 to disable.
@@ -82,7 +84,20 @@ class PowerCheck:
         'voltage_adj',
         'voltage_offset',
         'unused_checksum',
-        'fast_log_interval_ms']  # Values: 25-999, 0 to disable.
+        'fast_log_interval_ms',  # Values: 25-999, 0 to disable.
+        # The next settings are related to the screen configuration,
+        # and define the rgb colors of various features on PwrCheck+.
+        'foreground_rgb',
+        'background_rgb',
+        'volt_bar_graph_rgb',
+        'amp_bar_graph_rgb',
+        'watt_bar_graph_rgb',
+        'amp_hr_bar_graph_rgb',
+        'volt_graph_rgb',
+        'amp_graph_rgb',
+        'alarm_rgb',
+        'back_light_on_duty',  # Brightness of screen when on.
+        'back_light_off_duty',]  # Brightness of screen when dimmed.
     )
 
     # The byte mapping and fields for the status message.
@@ -136,6 +151,7 @@ class PowerCheck:
         self._read_buffer = collections.deque(maxlen=10)
         self._write_buffer = collections.deque(maxlen=10)
 
+        # Clear out any leftover information.
         self._ser.flush()
 
     @property
@@ -191,7 +207,7 @@ class PowerCheck:
         self._write(request_dump)
         # Read one packet at a time until we reach EOF.
         while cur_packet.payload:
-            time.sleep(0.01)
+            time.sleep(0.001)
             cur_packet = self._read_one_packet(type=0xa3)
             data.append(cur_packet.payload)
             self._write(nack_accept)
@@ -199,9 +215,18 @@ class PowerCheck:
         return self._process_dump_raw_data(data)
 
     def _read_one_packet(self, type: Optional[int] = None) -> PacketInfo:
-        """Reads one packet from the device."""
-        # Read to start of packet.
+        """Reads one packet from the device.
+        
+        Thif function will either receive the first packet available, or
+        the first packet of 'type' argument it sees.
+
+        Args:
+          type: the integer packet type to look for.
+        Return:
+          The PacketInfo (type and payload) of the response.
+        """
         while 1:
+            # Read to start of packet.
             self._ser.read_until(b'\x80')
             packet_len = self._ser.read(1)
             packet_data = self._ser.read(int.from_bytes(packet_len, 'little'))
@@ -210,18 +235,18 @@ class PowerCheck:
             if packet_checksum != sum(packet_len + packet_data[:-1]) & 0xff:
                 print('Checksum mismatch:')
                 print(packet_len + packet_data)
+                time.sleep(0.25)  # Sleep to trigger a resend.
             else:
                 self._read_buffer.append(packet_len + packet_data)
             # Separate the type and remove the checksum from the end.
             packet_result = self.PacketInfo(packet_data[0], packet_data[1:-1])
             if packet_result.type == type or type is None:
                 break
-
         return packet_result
 
     def _process_dump_raw_data(self,
                                dump_bytes: bytes) -> list[tuple[int, int]]:
-        """Processes the raw bytes received during a data dump."""
+        """Processes the raw bytes received during an EEPROM data dump."""
         values = []
         # Skip last value, which is null.
         for p in dump_bytes[:-1]:
@@ -243,23 +268,18 @@ class PowerCheck:
         return bytes(packet)
 
     def _process_packet(self, fmt: str, packet: PacketInfo):
-        """Processes packet and returns values.
-
-        Convenience method to index into packet, extract values, and return
-        the converted result.
+        """Processes packet according to format and returns values.
 
         Args:
           fmt: the struct fmt string to use for unpacking.
-          start_byte: the type of message, which proceeds the payload to process.
           packet: the bytes to process from the unit.
         Returns:
-        The extracted values from bytes after applying fmt.
-
+          The extracted values from bytes after applying fmt.
         """
         return struct.unpack_from(fmt, packet.payload)
 
     def _nack_packet(self, code: int = 0x0) -> bytes:
-        """Gets a nack packet to send to device.
+        """Returns a nack packet to send to device.
 
         Args:
           code: the status to relay.
@@ -278,7 +298,7 @@ class PowerCheck:
     def _packet_handshake(
             self, packet_type: int, data_fmt: str,
             data_type: collections.namedtuple) -> collections.namedtuple:
-        """Requests data from device and returns processed data type class.
+        """Requests data from device and returns processed data.
 
         For the get methods, there is a basic pattern to repeat:
         1. Send packet requesting packet type N.
@@ -317,15 +337,11 @@ class PowerCheck:
         """Sets configuration items provided from config namedtuple.
 
         This function can be used to set config using the fields of the
-        config namedtuple, in any number. For example:
+        config namedtuple as kwargs, in any number. For example:
           unit.set_config(backlight_timeout_s=10, log_interval_s=1)
 
         First it fetches the current config, modifies the fields requested,
         and then sends them back to the device.
-
-        Disclaimer: currently this sets the foreground and background colors
-        of the screen to black. This is most likely due to the reserved bytes
-        picking up new functionality that is not reflected in the design doc.
         """
         # Build the message based off last known values.
         packet_type = 0xa6
@@ -336,18 +352,18 @@ class PowerCheck:
         new_config = self.Config(**config_dict)
         payload = struct.pack(self.CONFIG_FMT, *new_config)
         # Add 9 trailing unpopulated bytes per design doc.
-        payload += 9 * b'\x00'
+        payload += 6 * b'\x00'  # 5 reserved bytes + 1 ignored checksum byte.
         request = self._make_packet(packet_type, payload)
         self._write(request)
         time.sleep(NACK_SLEEP)
         accept = self._read_one_packet()  # Read acceptance.
         complete = self._read_one_packet()  # Read complete.
-        if accept.payload == 0 and complete.payload == 1:
+        if accept.payload == b'\x00' and complete.payload == b'\x01':
             # If the packet was accepted and completed update cached config.
             self._last_config = new_config
 
-    def get_status(self):
-        """Gets status (0xa0) measured on device."""
+    def get_status(self) -> Status:
+        """Gets measurements status (0xa0) measured on device."""
         self._last_status = self._packet_handshake(
             0xa0, self.STATUS_FMT, self.Status)
         return self._last_status
@@ -355,7 +371,7 @@ class PowerCheck:
     def set_status_file(self, status_path: str):
         """Creates a file to receive streamed unit data.
 
-        This can be defined after the object is constructed. If this
+        This can be called after the class is constructed. If this
         is run and stream is called, the values collected from the
         unit will be copied to this file.
 
@@ -375,12 +391,12 @@ class PowerCheck:
             'time,' + ','.join(self._LOG_VALUES) + '\n')
 
     def stream_status(self, sample_period_s: float = 1.0,
-                      num_samples: int = 10, echo: bool = False):
-        """Streams status from device."""
+                      num_samples: int = 10, echo_on: bool = False):
+        """Streams status from device to screen and/or file."""
         write_fmt = '{:f}' + ',{:d}'*self._num_log_values + '\n'
         for i in range(num_samples):
             status = self.get_status()
-            if echo:
+            if echo_on:
                 print(status)
             time.sleep(sample_period_s)
             if self._monitor_file:
