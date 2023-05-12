@@ -1,4 +1,4 @@
-r"""Simple binary to test power_check functionality with hardware."""
+r"""Simple binary to test power_check functionality with PWRCheck+ HW."""
 import argparse
 import power_check
 import sys
@@ -8,35 +8,40 @@ LICENSE_INFO = """
 run_power_check  Copyright (C) 2023 Stephen Sulack
 This program comes with ABSOLUTELY NO WARRANTY.
 This is free software, and you are welcome to redistribute it
-under certain conditions; see the license file for details.
+under certain conditions; see the license file on github for details.
 """
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    # Note value will be stored under first name provided.
+    # Note value will be stored under first argument provided.
+    # These first ones print the major types of messages from the device.
     parser.add_argument('-config', action='store_true',
                         help='Prints config on device.')
     parser.add_argument('-status', '-r', action='store_true',
                         help='Returns current measurements from system.')
     parser.add_argument('-info', action='store_true',
                         help='Prints firmware info of device.')
+    # These arguments demonstrate changing settings on device.
     parser.add_argument('-reset', action='store_true',
                         help='Clears log data from device.')   
     parser.add_argument('-set_logging_sec', type=int, dest='logging_sec',
                         help='Sets logging interval')
     parser.add_argument('-over_voltage', type=int, dest='over_voltage',
                         help='Sets over voltage alarm limit.')
+    # These are the longer interactive modes.
     parser.add_argument('-dump', '-d', action='store_true',
                         help='Dumps logged data from EEPROM.')
     parser.add_argument('-stream_status', action='store_true',
                         help='Logs and writes data to file.')
     parser.add_argument('-samples', type=int, default=1,
                         help='Number of samples to collect while streaming.')
+    # These are generic settings for the device connection.
     parser.add_argument('-baud', choices=[9600, 19200, 38400, 57600, 115200], type=int,
                         default=115200, help='Baud rate for device.')
     parser.add_argument('-port', default='COM3',
                         help='Specify port for machine (COM3 for windows, /dev/PwrCheck linux)')
+    # This is for debugging, to see the raw traffic on serial during the run.
     parser.add_argument('-raw', action='store_true',
                         help='Dump raw byte read/write transactions from session.')    
     args = parser.parse_args()
@@ -65,7 +70,7 @@ if __name__ == '__main__':
         unit.set_status_file('./')
         unit.stream_status(num_samples=args.samples)
     elif args.dump:
-        print(f'Dumping eeprom from unit.')
+        print(f'Dumping EEPROM from unit.')
         eeprom_data = unit.dump_eeprom()
         print(f'Found {len(eeprom_data)} values: {eeprom_data}')
     elif args.logging_sec is not None:
@@ -73,12 +78,12 @@ if __name__ == '__main__':
         unit.set_config(log_interval_s=args.logging_sec)
         time.sleep(0.5)
         print('Verifying new setting.')
-        print(unit.config)
+        print(unit.get_config())
     elif args.over_voltage is not None:
         print(f'Applying overvoltage value of {args.over_voltage}')
         unit.set_config(over_voltage_mv=args.over_voltage)
         print('Verifying new setting.')
-        print(unit.get_config)
+        print(unit.get_config())
 
     # For viewing the raw traffic from the command.
     if args.raw:
