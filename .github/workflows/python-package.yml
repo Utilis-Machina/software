@@ -4,17 +4,17 @@
 name: Python package
 
 env:
-  LIBRARY_DIR: &dir PowerCheck
+  LIBRARY_DIR: PowerCheck
 
 on:
   push:
     branches: [ "main" ]
     paths:
-      - *dir
+      - PowerCheck/**
   pull_request:
     branches: [ "main" ]
     paths:
-      - *dir
+      - PowerCheck/**
   workflow_dispatch:
 
 jobs:
