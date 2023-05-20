@@ -47,7 +47,8 @@ def test_split_fields_from_payload_data(payload_bytes, field_list):
     'packet, expected_checksum', [
         (b'\x75\x65\x01\x02\x02\x01', b'\xe0\xc6'),  # Ping example.
         (b'\x75\x65\x01\x04\x04\xf1\x01\x00', b'\xd5\x6a'),  # Ping response.
-        (b'\x75\x65\x0c\x0a\x0a\x01\x00\x02\x04\x00\x00\x05\x00\x00', b'\x06\x27')  # Poll IMU.
+        (b'\x75\x65\x0c\x0a\x0a\x01\x00\x02\x04\x00\x00\x05\x00\x00',
+         b'\x06\x27')  # Poll IMU.
     ]
 )
 def test_checksum_calculation(packet, expected_checksum):
@@ -69,10 +70,12 @@ def test_read_one_packet():
 
 def test_ping_command(mocker):
     error_expected = 0x00
-    # Test from the read level to make sure the helper _send_and_parse_reply works.
+    # Test from the read level to make sure the helper _send_and_parse_reply
+    # works.
     mock_read = mocker.patch('microstrain.Microstrain3DM._read_one_packet')
     mock_read.return_value = microstrain.MipsPacket(
-        b'\x01', [microstrain.MipsField(0x04, 0xf1, data=[0x01, error_expected])])
+        b'\x01', [microstrain.MipsField(0x04, 0xf1,
+                                        data=[0x01, error_expected])])
     unit = microstrain.Microstrain3DM()
     response = unit.device_ping()  # Ack response received.
     unit._ser.write.assert_called_with(b'\x75\x65\x01\x02\x02\x01\xe0\xc6')
