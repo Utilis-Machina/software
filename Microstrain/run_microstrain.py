@@ -31,14 +31,15 @@ if __name__ == '__main__':
     parser.add_argument('-test', action='store_true',
                         help='Run built-in test and print results.')    
     # These are generic settings for the device connection.
-    parser.add_argument('-baud', choices=[9600, 19200, 38400, 57600, 115200], type=int,
-                        default=115200, help='Baud rate for device.')
+    parser.add_argument('-baud', choices=[9600, 19200, 38400, 57600, 115200],
+                        type=int, default=115200, help='Baud rate for device.')
     parser.add_argument('-port', default='COM5',
-                        help='Specify port for machine (COM3 for windows, /dev/PwrCheck linux)')
+                        help=('Specify port for machine (COM3 for windows, '
+                              '/dev/ustrain linux)'))
 
     # This is for debugging, to see the raw traffic on serial during the run.
     parser.add_argument('-raw', action='store_true',
-                        help='Dump raw byte read/write transactions from session.') 
+                        help='Dump raw byte read/writes from session.') 
     args = parser.parse_args()
 
     # If no arguments, print copyright notice and help.
