@@ -118,8 +118,8 @@ class MipsPacket:
         field_bytes = []
         for entry in self.payload:
             field_bytes.extend(entry)
-        packet = bytearray([SYNC1, SYNC2, self.desc_set, self.payload_len])
-        packet += field_bytes
+        packet = bytearray([SYNC1, SYNC2, self.desc_set, self.payload_len]
+                           + field_bytes)
         packet += fletcher_checksum(packet)
         return packet
 
