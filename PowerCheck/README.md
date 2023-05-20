@@ -12,6 +12,10 @@ The PowerCheck+ unit has a touch screen for basic interactions, a micro-USB port
 and feeds. The device can independently collect data and store it on EEPROM. The screen displays realtime and plots of data history
 on its screen. For more information the link above includes a tab where the operator's manual can be found.
 
+<p align="center">
+  <img src="http://www.westmountainradio.com/images/catalog/pwrcheck_plus-bigZoom.jpg" />
+</p>
+
 ## Software Description
 
 The software library uses pyserial to implement the binary interface defined in their Design Doc. It allows for both pulling data from the
