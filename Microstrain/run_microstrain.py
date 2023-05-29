@@ -29,14 +29,34 @@ if __name__ == '__main__':
     parser.add_argument('-info', action='store_true',
                         help='Get model and serial info from device.')
     parser.add_argument('-test', action='store_true',
-                        help='Run built-in test and print results.')    
+                        help='Run built-in test and print results.')
+    # IMU commands.
+    parser.add_argument('-imu', action='store_true',
+                        help='Get accelerometer data from IMU.')
+    parser.add_argument('-imu_all', action='store_true',
+                        help='Get all data from IMU.')
+    parser.add_argument('-imu_stream', action='store_true',
+                        help='Stream data from IMU.')
+    parser.add_argument('-stream_sec', type=float, default=5.0,
+                        help='Number of seconds to collect data for.')
+    parser.add_argument('-pressure', action='store_true',
+                        help='Get pressure data from IMU.') 
+    # GPS commands.
+    parser.add_argument('-gps', action='store_true',
+                        help='Get accelerometer data from GPS.')
+    parser.add_argument('-gps_all', action='store_true',
+                        help='Get all data from GPS.')
+    # Field testing cases.
+    parser.add_argument('-stream_test', action='store_true',
+                        help='Stream data to file in multiple formats.')
+    parser.add_argument('-stream_reset', action='store_true',
+                        help='Reset message formats on device.')
     # These are generic settings for the device connection.
     parser.add_argument('-baud', choices=[9600, 19200, 38400, 57600, 115200],
                         type=int, default=115200, help='Baud rate for device.')
     parser.add_argument('-port', default='COM5',
                         help=('Specify port for machine (COM3 for windows, '
                               '/dev/ustrain linux)'))
-
     # This is for debugging, to see the raw traffic on serial during the run.
     parser.add_argument('-raw', action='store_true',
                         help='Dump raw byte read/writes from session.') 
@@ -58,6 +78,48 @@ if __name__ == '__main__':
     if args.test:
         print(f'Running built-in-test for device.')
         print(f'Result: {unit.device_built_in_test()}')
+    if args.imu:
+        print(f'Collecting data from IMU.')
+        unit.set_msg_fmt(descriptors=[0x04, 0x11])
+        print(f'Result: {unit.poll_data()}')
+    if args.pressure:
+        print(f'Checking ambient pressure.')
+        unit.set_msg_fmt(descriptors=[0x17])
+        print(f'Result: {unit.poll_data()}')
+    if args.imu_all:
+        print(f'Collecting example data from IMU.')
+        unit.set_msg_fmt(descriptors=[4, 5, 6, 7, 8, 9, 10, 12, 16, 17, 18, 23],
+                         rate_hz = [1.0])
+        print(f'Result: {unit.poll_data()}')
+    if args.imu_stream:
+        print(f'Streaming IMU data for {args.stream_sec} seconds.')
+        unit.set_msg_fmt(descriptors=[0x04, 0x10], rate_hz = [1.0, 2.0])
+        data = unit.collect_data_stream(args.stream_sec)
+        print(f'Received {len(data)} samples.')
+        processed_data = microstrain.process_mips_packets(data)
+        print(f'Result: {processed_data}')
+    if args.stream_reset:
+        print(f'Reset message formats.')
+        unit.reset_msg_fmt(microstrain.DataMessages.IMU)
+        unit.reset_msg_fmt(microstrain.DataMessages.GPS)
+        unit.reset_msg_fmt(microstrain.DataMessages.EKF)
+    if args.stream_test:
+        print(f'Streaming data for {args.stream_sec} seconds.')
+        unit.set_msg_fmt(microstrain.DataMessages.IMU,
+                         [0x04, 0x10], rate_hz = [1.0, 2.0])
+        unit.set_msg_fmt(microstrain.DataMessages.GPS, [0x03], [1.0])
+        data = unit.collect_data_stream(args.stream_sec)
+        unit.write_stream_data()
+        print(f'Results written to file.')
+    if args.gps:
+        print(f'Collecting example data from GPS.')
+        unit.set_msg_fmt(microstrain.DataMessages.GPS, [4], [1.0])
+        print(f'Result: {unit.poll_data(microstrain.DataMessages.GPS)}')
+    if args.gps_all:
+        print(f'Collecting example data from GPS.')
+        unit.set_msg_fmt(microstrain.DataMessages.GPS,
+                         [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], rate_hz = [0.1])
+        print(f'Result: {unit.poll_data(microstrain.DataMessages.GPS)}')
 
     if args.raw:
         print('Writes from command.')

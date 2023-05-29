@@ -21,6 +21,21 @@ def test_mips_field_as_iter():
     assert list(sample) == [0x06, 0x11, 0x02, 0x04, 0x06, 0x08]
 
 @pytest.mark.parametrize(
+    'msg_type, field_len, field_desc, data_bytes, expect', [
+        (microstrain.DataMessages.IMU.msg_ind, 0x0e, 0x04,
+         b'\x3e\x7a\x63\xa0xbb\x8e\x3b\x29\x7f\xe5\xbf7f',
+         ['Accel g', 'Accel g', 'Accel g']),
+        (microstrain.DataMessages.GPS.msg_ind, 0x08, 0x0b,
+         b'\x00\x01\x00\x02\x00\x03', ['n/a', 'count', 'n/a', 'n/a'])]
+)
+def test_get_units_for_data_message(msg_type, field_len, field_desc, data_bytes,
+                                    expect):
+    field_data = microstrain.MipsField(field_len, field_desc,
+                                       data_bytes=data_bytes)
+    units = microstrain.ReplyFormats.get_field_units(msg_type, field_data)
+    assert units == expect
+
+@pytest.mark.parametrize(
     'payload_bytes, field_list', [
         # Device reset example - single field case.
         (b'\x04\xf1\x7e\x00', [
@@ -55,6 +70,50 @@ def test_checksum_calculation(packet, expected_checksum):
     check_sum = microstrain.fletcher_checksum(packet)
     assert check_sum == expected_checksum
 
+def test_process_mips_packet():
+    imu_fields = [
+        microstrain.MipsField(
+        0x0e, 0x04, data_bytes=b'?\x80\x00\x00@\x00\x00\x00@@\x00\x00'),
+        microstrain.MipsField(0x06, 0x17, data_bytes=b'?\x80\x00\x00'),
+        microstrain.MipsField(
+        0x12, 0x0a, data_bytes=b'?\x80\x00\x00' + 12*b'\x00')]
+    gps_fields = [microstrain.MipsField(0x08, 0x0b, data = [0, 1, 0, 2, 0, 3])]
+    imu_desc = microstrain.DataMessages.IMU.msg_ind
+    gps_desc = microstrain.DataMessages.GPS.msg_ind
+    packets = [microstrain.MipsPacket(imu_desc, imu_fields),
+               microstrain.MipsPacket(gps_desc, gps_fields)]
+    result = microstrain.process_mips_packets(packets)
+    assert result == [microstrain.ReplyFormats.Vector(1.0, 2.0, 3.0),
+                      microstrain.ReplyFormats.AmbPressure(1.0),
+                      microstrain.ReplyFormats.Quat(1.0, 0, 0, 0),
+                      microstrain.ReplyFormats.GPSFix(0, 1, 2, 3)]
+    
+def test_flatten_payload():
+    gps_fields = [
+        microstrain.MipsField(0x08, 0x0b, data = [0, 1, 0, 2, 0, 3]),
+        microstrain.MipsField(0x0f, 0x08,
+                              data=[0, 4, 5, 6, 7, 8, 9, 0, 0, 0, 10, 0, 11])]
+    gps_desc = microstrain.DataMessages.GPS.msg_ind
+    packet = microstrain.MipsPacket(gps_desc, gps_fields)
+    assert packet.flatten_payload() == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+
+def test_divide_mips_packets():
+    imu_packet = microstrain.MipsPacket(
+        microstrain.DataMessages.IMU.msg_ind,
+        [microstrain.MipsField(0x06, 0x17, data_bytes=b'?\x80\x00\x00')])
+    gps_packet = microstrain.MipsPacket(
+        microstrain.DataMessages.GPS.msg_ind,
+        [microstrain.MipsField(0x08, 0x0b, data = [0, 1, 0, 2, 0, 3])]
+    )
+    ekf_packet = microstrain.MipsPacket(
+        microstrain.DataMessages.EKF.msg_ind,
+        [microstrain.MipsField(0x02, 0xff)]
+    )
+    packets = [imu_packet, gps_packet, ekf_packet, gps_packet, imu_packet,
+               imu_packet]
+    imu, gps, ekf = microstrain.divide_mips_packets(packets)
+    assert (len(imu), len(gps), len(ekf)) == (3, 2, 1)
+
 def test_read_one_packet():
     packet = b'\x01\x0a\x04\xf1\x05\x00\x06\x83\x01\x02\x03\x04\x68\x7d'
     unit = microstrain.Microstrain3DM()
@@ -74,7 +133,7 @@ def test_ping_command(mocker):
     # works.
     mock_read = mocker.patch('microstrain.Microstrain3DM._read_one_packet')
     mock_read.return_value = microstrain.MipsPacket(
-        b'\x01', [microstrain.MipsField(0x04, 0xf1,
+        0x01, [microstrain.MipsField(0x04, 0xf1,
                                         data=[0x01, error_expected])])
     unit = microstrain.Microstrain3DM()
     response = unit.device_ping()  # Ack response received.
@@ -98,4 +157,109 @@ def test_device_command(mocker, command, expected_bytes):
     unit = microstrain.Microstrain3DM()
     getattr(unit, command)()
     send_packet = mock_send.call_args[0][0]
-    assert send_packet.as_bytes == expected_bytes   
+    assert send_packet.as_bytes == expected_bytes
+
+def test_set_imu_format(mocker):
+    mock_send = mocker.patch('microstrain.Microstrain3DM._send_and_parse_reply')
+    unit = microstrain.Microstrain3DM()
+    unit.set_msg_fmt(microstrain.DataMessages.IMU, [0x04, 0x05], [50.])
+    send_packet = mock_send.call_args[0][0]
+    expect = b'\x75\x65\x0c\x0a\x0a\x08\x01\x02\x04\x00\x0a\x05\x00\x0a\x22\xa0'
+    assert send_packet.as_bytes == expect
+
+def test_set_gps_format(mocker):
+    mock_send = mocker.patch('microstrain.Microstrain3DM._send_and_parse_reply')
+    unit = microstrain.Microstrain3DM()
+    unit.set_msg_fmt(microstrain.DataMessages.GPS, [0x03, 0x05], [1.])
+    send_packet = mock_send.call_args[0][0]
+    expect = b'\x75\x65\x0c\x0a\x0a\x09\x01\x02\x03\x00\x04\x05\x00\x04\x16\x85'
+    assert send_packet.as_bytes == expect
+
+def test_set_estimation_filter_format(mocker):
+    mock_send = mocker.patch('microstrain.Microstrain3DM._send_and_parse_reply')
+    unit = microstrain.Microstrain3DM()
+    unit.set_msg_fmt(microstrain.DataMessages.EKF, [0x01, 0x02], [500.])
+    send_packet = mock_send.call_args[0][0]
+    expect = b'\x75\x65\x0c\x0a\x0a\x0a\x01\x02\x01\x00\x01\x02\x00\x01\x0c\x6a'
+    assert send_packet.as_bytes == expect  
+
+def test_get_msg_format_for_gps(mocker):
+    mock_cmd = mocker.patch('microstrain.Microstrain3DM._send_command')
+    mock_cmd.return_value = microstrain.MipsPacket(0x0c,[
+        microstrain.MipsField(0x04, 0xf1, [0x09, 0x00]),
+        microstrain.MipsField(0x06, 0x81, [0x01, 0x03, 0x00, 0x04])
+    ])
+    unit = microstrain.Microstrain3DM()
+    formats = unit.get_msg_fmt(microstrain.DataMessages.GPS)
+    send_packet = mock_cmd.call_args[0][0]
+    expect = b'\x75\x65\x0c\x04\x04\x09\x02\x00\xf9\xf6'
+    assert send_packet.as_bytes == expect
+    assert formats == [microstrain.ReplyFormats.DataFmt(0x03, 0x04)]
+
+def test_save_msg_format_for_estimation_filter(mocker):
+    mock_cmd = mocker.patch('microstrain.Microstrain3DM._send_command')
+    unit = microstrain.Microstrain3DM()
+    unit.save_msg_fmt(microstrain.DataMessages.EKF)
+    send_packet = mock_cmd.call_args[0][0]
+    expect = b'\x75\x65\x0c\x04\x04\x0a\x03\x00\xfb\xfb'
+    assert send_packet.as_bytes == expect
+
+def test_load_msg_format_for_imu(mocker):
+    mock_cmd = mocker.patch('microstrain.Microstrain3DM._send_command')
+    unit = microstrain.Microstrain3DM()
+    unit.load_msg_fmt(microstrain.DataMessages.IMU)
+    send_packet = mock_cmd.call_args[0][0]
+    expect = b'\x75\x65\x0c\x04\x04\x08\x04\x00\xfa\xf7'
+    assert send_packet.as_bytes == expect
+
+def test_reset_msg_format_for_gps(mocker):
+    mock_cmd = mocker.patch('microstrain.Microstrain3DM._send_command')
+    unit = microstrain.Microstrain3DM()
+    unit.reset_msg_fmt(microstrain.DataMessages.GPS)
+    send_packet = mock_cmd.call_args[0][0]
+    expect = b'\x75\x65\x0c\x04\x04\x09\x05\x00\xfc\xfc'
+    assert send_packet.as_bytes == expect
+
+def test_poll_data_for_estimation_filter(mocker):
+    mock_send = mocker.patch('microstrain.Microstrain3DM._send_and_parse_reply')
+    unit = microstrain.Microstrain3DM()
+    unit.poll_data(microstrain.DataMessages.EKF)
+    send_packet = mock_send.call_args[0][0]
+    expect = b'\x75\x65\x0c\x04\x04\x03\x01\x00\xf2\xe2'
+    assert send_packet.as_bytes == expect
+
+def test_create_headers_for_file():
+    unit = microstrain.Microstrain3DM()
+    header = unit._create_file_header_for_fmt(
+        microstrain.DataMessages.IMU, {1.0: [0x04, 0x06], 2.0: [0x17]})
+    expect = {1.0: ['x (Accel g)', 'y (Accel g)', 'z (Accel g)',
+                    'x (Mag gauss)', 'y (Mag gauss)', 'z (Mag gauss)'],
+              2.0: ['pressure (milliBar)']}
+    assert header == expect
+
+def test_collect_data_stream(mocker):
+    mock_resume = mocker.patch('microstrain.Microstrain3DM.device_resume')
+    mock_idle = mocker.patch('microstrain.Microstrain3DM.device_idle')
+    mocker.patch('microstrain.Microstrain3DM._read_one_packet')
+    mock_time = mocker.patch('microstrain.time')
+    mock_time.time.side_effect = [0, 1, 2]
+    unit = microstrain.Microstrain3DM()
+    unit._ser.in_waiting = False
+    unit.collect_data_stream(2)
+    # Really want to ensure that the device is managed correctly.
+    mock_resume.assert_called_once()
+    mock_idle.assert_called_once()
+
+def test_write_stream_data(mocker):
+    mock_open = mocker.patch('builtins.open')
+    unit = microstrain.Microstrain3DM()
+    unit._stream_results = [
+        microstrain.MipsPacket(
+            microstrain.DataMessages.IMU.msg_ind,
+            [microstrain.MipsField(0x06, 0x17, data_bytes=b'?\x80\x00\x00')])]
+    unit._imu_fmt = {1.0: [0x17]}
+    unit.write_stream_data()
+    # Make sure import info in file name.
+    file_destination = mock_open.call_args[0][0]
+    assert all(['1.0' in file_destination, 'imu' in file_destination])
+    
