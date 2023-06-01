@@ -49,13 +49,25 @@ SYNC1 = 0x75
 SYNC2 = 0x65
 SYNC_MSG = bytearray([SYNC1, SYNC2])
 
-class MessageFormatSelectors(enum.Enum):
+class FunctionSelectors(enum.Enum):
     """These are the possible options when setting up a data message format."""
     NEW = 1
     READ_BACK = 2
     SAVE = 3
     LOAD = 4
     RESET = 5
+
+class EkfDynamicsMode(enum.Enum):
+    PORTABLE = 1  # Low acceleration applications.
+    AUTOMOTIVE = 2  # Low vertical acceleration, wheeled vehicle dynamics.
+    AIRBORNE = 3  # Airborne up to 2 Gs.
+    AIRBORNE_HIGH_G = 4  # Airborn up to 4 Gs.
+
+class EkfHeadingUpdate(enum.Enum):
+    DISABLE = 0
+    MAG = 1
+    GPS = 2
+    EXT = 3
 
 class DataMessages(enum.Enum):
     """Small class to bundle interactions with the different message formats.
@@ -65,14 +77,16 @@ class DataMessages(enum.Enum):
       fmt_cmd: the field descriptor portion of the format command.
       poll_cmd: the field desecriptor portion of the poll command.  
     """
-    IMU = (0x80, 0x08, 0x01)
-    GPS = (0x81, 0x09, 0x02)
-    EKF = (0x82, 0x0a, 0x03)
+    IMU = (0x80, 0x08, 0x01, 0x06)
+    GPS = (0x81, 0x09, 0x02, 0x07)
+    EKF = (0x82, 0x0a, 0x03, 0x0b)
 
-    def __init__(self, msg_ind, fmt_cmd, poll_cmd):
+    def __init__(self, msg_ind, fmt_cmd, poll_cmd, rate_cmd):
         self.msg_ind = msg_ind
         self.fmt_cmd = fmt_cmd
         self.poll_cmd = poll_cmd
+        self.rate_cmd = rate_cmd
+
 
 def fletcher_checksum(packet: bytes) -> bytes:
     """Calculates fletcher checksum for bytes in packet."""
@@ -211,13 +225,14 @@ class ReplyFormats:
                                      ['descriptor', 'rate_decimation'])
 
     # Each set of information stores the format, class, and units of the data.
+    Vector = collections.namedtuple('Vector', ['x', 'y', 'z'])
     base_set = {
         0x81: ('>H16s16s16s16s16s', DevInfo),  # Device info.
         0x83: ('>I', int),  # Built-in self test.
+        0x9b: ('>fff', Vector),  # Gyro bias.
         0xf1: ('>BB', Ack),  # (N)Ack message.
     }
 
-    Vector = collections.namedtuple('Vector', ['x', 'y', 'z'])
     Quat = collections.namedtuple('Quat', ['q0', 'q1', 'q2', 'q3'])
     Euler = collections.namedtuple('Euler', ['roll', 'pitch', 'yaw'])
     Matrix = collections.namedtuple('Matrix', ['M11', 'M12', 'M13',
@@ -257,8 +272,8 @@ class ReplyFormats:
         0x17: ['milliBar'],     
     }
 
-    PosLLH = collections.namedtuple(
-        'PosLLH',['lat', 'lon', 'ellipsoid_ht', 'msl_ht',
+    GpsLLH = collections.namedtuple(
+        'GpsLLH',['lat', 'lon', 'ellipsoid_ht', 'msl_ht',
                   'horizontal_acc', 'vertical_acc', 'flags'
     ])
     PosECEF = collections.namedtuple(
@@ -295,7 +310,7 @@ class ReplyFormats:
     ])
 
     gps_set = {
-        0x03: ('>ddddffH', PosLLH),
+        0x03: ('>ddddffH', GpsLLH),
         0x04: ('>dddfH', PosECEF),
         0x05: ('>ffffffffH', VelNED),
         0x06: ('>ffffH', VelECEF),
@@ -322,11 +337,109 @@ class ReplyFormats:
         0x0d: 4*['n/a']    
     }
 
+    FilterState = collections.namedtuple(
+        'FilterState', ['state', 'dynamics_mode', 'flags'])
+    EkfLLH = collections.namedtuple(
+        'EkfLLH',['lat', 'lon', 'ellipsoid_ht', 'flags'])
+    EkfVelNED = collections.namedtuple(
+        'EkfVelNED', ['north', 'east', 'down', 'flags'])
+    EkfQuat = collections.namedtuple('EkfQuat', Quat._fields + ('flags',))
+    EkfMatrix = collections.namedtuple('EkfMatrix', Matrix._fields + ('flags',))
+    EkfEuler = collections.namedtuple('EkfEuler', Euler._fields + ('flags',))
+    EkfVector = collections.namedtuple('EkfVector', Vector._fields + ('flags',))
+    UcLLH = collections.namedtuple('UcLLH', 
+        [f'uc_{f}_1sig' for f in ['north', 'east', 'down']] + ['flags'])
+    UcNED = collections.namedtuple('UcNED', UcLLH._fields)
+    UcEuler = collections.namedtuple('UcLLH', 
+        [f'uc_{f}_1sig' for f in ['roll', 'pitch', 'yaw']] + ['flags'])
+    UcVec = collections.namedtuple('UcVec',
+        [f'uc_x_1sig', 'uc_y_1sig', 'uc_z_1sig', 'flags'])
+    Wgs84 = collections.namedtuple('Wgs84', ['grav_mag', 'flags'])
+    UcQuat = collections.namedtuple('UcQuat',
+        [f'uc_{f}_1sig' for f in ['q0', 'q1', 'q2', 'q3']] + ['flags'])
+    EkfHeading = collections.namedtuple('EkfHeading',
+        ['true_heading', 'heading_uc_1sig', 'source', 'flags'])
+    AtmModel = collections.namedtuple('AtmModel',
+        ['geometric_alt', 'geopotential_alt', 'temp', 'pressure', 'density',
+         'flags'])
+    MagModel = collections.namedtuple('MagModel', 
+        ['intensity_north', 'intensity_east', 'intensity_down', 'inclination',
+        'declination', 'flags'])
+    PressureAlt = collections.namedtuple('PressureAlt', ['pressure', 'flags'])
+
+    ekf_set = {
+        0x01: ('>dddH', EkfLLH),  # LLH position.
+        0x02: ('>fffH', EkfVelNED),  # NED velocity.
+        0x03: ('>ffffH', EkfQuat),  # Orientation quaternion.
+        0x04: ('>fffffffffH', EkfMatrix),  # Orientation matrix.
+        0x05: ('>fffH', EkfEuler),  # Orientation euler angles.
+        0x06: ('>fffH', EkfVector),  # Gyro bias.
+        0x07: ('>fffH', EkfVector),  # Accel bias.
+        0x08: ('>fffH', UcLLH),  # LLH position uncertainty.
+        0x09: ('>fffH', UcNED),  # NED velocity uncertainty.
+        0x0a: ('>fffH', UcEuler),  # Attitude uncertainty euler angles.
+        0x0b: ('>fffH', UcVec),  # Gyro bias uncertainty.
+        0x0c: ('>fffH', UcVec),  # Accel bias uncertainty.
+        0x0d: ('>fffH', EkfVector),  # Linear acceleration.  
+        0x0e: ('>fffH', EkfVector),  # Compensated angular rate.
+        0x0f: ('>fH', Wgs84),  # WGS84 local gravity magnitude.
+        0x10: ('>HHH', FilterState),  # Filter status.
+        0x11: ('>dHH', GPSTime),  # GPS timestamp.
+        0x12: ('>ffffH', UcQuat),  # Attitude uncertainty, quat elements.
+        0x13: ('>fffH', EkfVector),  # Gravity vector.
+        0x14: ('>ffHH', EkfHeading),  # Heading update source state.
+        0x15: ('>fffffH', MagModel),  # Magnetic model solution.
+        0x16: ('>fffH', EkfVector),  # Gyro scale factor.
+        0x17: ('>fffH', EkfVector),  # Accel scale factor.
+        0x18: ('>fffH', UcVec),  # Gyro scale factor uncertainty.
+        0x19: ('>fffH', UcVec),  # Accel scale factor uncertainty.
+        0x1c: ('>fffH', EkfVector),  # Compensated linear acceleration.
+        0x20: ('>fffffH', AtmModel),  # Standard atmosphere model.
+        0x21: ('>fH', PressureAlt),  # Pressure altitude.
+        0x30: ('>fffH', EkfVector),  # GPS Antenna offset correction.
+        0x31: ('>fffH', UcVec),  # GPS Antenna offset correction uncertainty.
+    }
+
+    ekf_units = {
+        0x01: 2*['deg'] + ['m', 'n/a'],
+        0x02: 3*['m/s'] + ['n/a'],
+        0x03: 5*['n/a'],
+        0x04: 10*['n/a'],
+        0x05: 3*['rad'] + ['n/a'],
+        0x06: 3*['rad/s'] + ['n/a'],
+        0x07: 3*['m/s2'] + ['n/a'],
+        0x08: 3*['m'] + ['n/a'],
+        0x09: 3*['m/s'] + ['n/a'],
+        0x0a: 3*['rad'] + ['n/a'],
+        0x0b: 3*['rad/s'] + ['n/a'],
+        0x0c: 3*['m/s2'] + ['n/a'],
+        0x0d: 3*['m/s2'] + ['n/a'], 
+        0x0e: 3*['rad/s'] + ['n/a'],
+        0x0f: ['m/s2', 'n/a'],
+        0x10: 3*['n/a'],
+        0x11: ['sec', 'week', 'n/a'],
+        0x12: 5*['n/a'],
+        0x13: 3*['m/s2'] + ['n/a'],
+        0x14: 2*['rad'] + 2*['n/a'],
+        0x15: 3*['gauss'] + 2*['rad'] + ['n/a'],
+        0x16: 3*['%/100'] + ['n/a'],
+        0x17: 3*['%/100'] + ['n/a'],
+        0x18: 3*['%/100'] + ['n/a'],
+        0x19: 3*['%/100'] + ['n/a'],
+        0x1c: 3*['m/s2'] + ['n/a'],
+        0x20: ['m', 'm', 'decC', 'mBar', 'kg/m3', 'n/a'],
+        0x21: ['m', 'n/a'],
+        0x30: 3*['m'] + ['n/a'],
+        0x31: 3*['m'] + ['n/a'],
+    }
+
     format_map = {
-        0x01: base_set,
-        0x0c: base_set,
+        0x01: base_set,  # Back commands for all devices.
+        0x0c: base_set,  # To pick up ack/nack for 3DM commands.
+        0x0d: base_set,  # To pick up ack/nack for EKF commands.
         DataMessages.IMU.msg_ind: imu_set,
         DataMessages.GPS.msg_ind: gps_set,
+        DataMessages.EKF.msg_ind: ekf_set,
     }
 
     @classmethod
@@ -345,7 +458,39 @@ class ReplyFormats:
             units = self.imu_units
         elif desc_set == DataMessages.GPS.msg_ind:
             units = self.gps_units
+        elif desc_set == DataMessages.EKF.msg_ind:
+            units = self.ekf_units
         return units[mips_field.field_desc]
+    
+    @classmethod
+    def decode_ekf_status(self, status: FilterState) -> list[str]:
+        """Translates EKF messages into human readable form."""
+        run_decoder = {
+            0x0001: 'IMU Unavailable',
+            0x0002: 'GPS Unavailable',
+            0x0008: 'Matrix Singularity in calculation',
+            0x0010: 'Position Covariance High Warning',
+            0x0020: 'Velocity Covariance High Warning',
+            0x0040: 'Attitude Covariance High Warning',
+            0x0080: 'NAN in Solution',
+            0x0100: 'Gyro bias estimate high warning',
+            0x0200: 'Accel bias estimate high warning',
+            0x0400: 'Gyro scale factor estimate high warning',
+            0x0800: 'Accel scale factor estimate high warning',
+            0x2000: 'GPS Antenna Offset Correction estimate high warning'
+            }
+        init_decoder = {
+            0x1000: 'Attitude not initialized',
+            0x2000: 'Position & Velocity not initialized'
+            }
+        state_str = ['startup', 'init', 'run', 'error'][status.state]
+        decoder = {0x01: init_decoder, 0x02: run_decoder}[status.state]
+        print(f'EKF in {state_str} phase.')
+        messages = []
+        for key, msg in decoder.items():
+            if key & status.flags:
+                messages.append(msg)
+        return messages
 
 
 def process_mips_packets(
@@ -491,6 +636,35 @@ class Microstrain3DM:
             MipsPacket(0x01,[MipsField(0x02, 0x05)]))
         return data[1]
     
+    def device_baud(self, baud_rate = 115200,
+                    func_sel: FunctionSelectors = FunctionSelectors.NEW
+    ) -> collections.namedtuple:
+        """Sets baud rate on device."""
+        valid_rates = (9600, 19200, 115200, 230400, 460800, 921600)
+        if baud_rate not in valid_rates:
+            raise ValueError(f'Baud rate must be one of {valid_rates}')
+        if baud_rate != self._ser.baudrate:
+            # Only send if this will be a change on the hardware side.
+            field_bytes = struct.pack('>BI', func_sel.value, baud_rate)
+            cmd = MipsPacket(0x0c, [MipsField(0x07, 0x40,
+                                              data_bytes=field_bytes)])
+            self._send_and_parse_reply(cmd)
+            time.sleep(0.25)
+            self._ser.close()
+            self._baud_rate = baud_rate
+            self._ser.baudrate = baud_rate
+            self._ser.open()
+
+    def device_base_rate(self, msg_type: DataMessages) -> int:
+        """Queries and returns base rate for msg on device."""
+        cmd = MipsPacket(0x0c, [MipsField(0x02, msg_type.rate_cmd)])
+        response = self._send_command(cmd)
+        # This response comes back with a duplicate field descriptor (0x83), so
+        # process it locally.
+        data_field = response.payload[1]
+        rate_hz = struct.unpack('>H', data_field.data_bytes)
+        return rate_hz[0]
+    
     def _generate_field_for_descriptors(
             self, cmd_desc: int, base_rate: float, selector: int,
             descriptors: list[int], rate_hz: list[float]) -> MipsField:
@@ -499,12 +673,13 @@ class Microstrain3DM:
         field_data = [selector, num_descriptors]
         for i in range(num_descriptors):
             # Each field contains the descriptor number, and the decimation
-            # factor as 2 bytes.
-            desc_rate = max(int(base_rate / rate_hz[i]), 1)
+            # factor as 2 bytes. Allow this to be zero to cover the case of
+            # polling data in a provided format.
+            desc_rate = int(base_rate / rate_hz[i])
             field_data.extend([descriptors[i],
                                desc_rate >> 8, desc_rate & 0xff])
         return MipsField(4 + 3 * num_descriptors, cmd_desc, field_data)
-    
+
     def _get_max_rate(self, msg_type: DataMessages) -> float:
         if msg_type == DataMessages.IMU:
             base_rate = self.IMU_RATE
@@ -540,7 +715,7 @@ class Microstrain3DM:
         self._add_descriptors_and_rates(msg_type, descriptors, desc_hz)
         fmt_payload = self._generate_field_for_descriptors(
             msg_type.fmt_cmd, self._get_max_rate(msg_type),
-            MessageFormatSelectors.NEW.value, descriptors, desc_hz)
+            FunctionSelectors.NEW.value, descriptors, desc_hz)
         data = self._send_and_parse_reply(MipsPacket(0x0c, [fmt_payload]))
         return data[0]
     
@@ -567,7 +742,7 @@ class Microstrain3DM:
                        msg_type: DataMessages = DataMessages.IMU) -> MipsField:
         """Returns the message format and decimation factors requested."""
         cmd = MipsField(0x04, msg_type.fmt_cmd,
-                        [MessageFormatSelectors.READ_BACK.value, 0x00])
+                        [FunctionSelectors.READ_BACK.value, 0x00])
         data = self._send_command(MipsPacket(0x0c, [cmd]))
         # The format will be returned in a field after the ack message, and
         # consist of repeated messages.
@@ -581,7 +756,7 @@ class Microstrain3DM:
                         msg_type: DataMessages = DataMessages.IMU) -> MipsField:
         """Saves the current settings to apply at startup."""
         cmd = MipsField(0x04, msg_type.fmt_cmd,
-                        [MessageFormatSelectors.SAVE.value, 0x00])
+                        [FunctionSelectors.SAVE.value, 0x00])
         data = self._send_command(MipsPacket(0x0c, [cmd]))
         return data.convert_payload()
     
@@ -589,7 +764,7 @@ class Microstrain3DM:
             self, msg_type: DataMessages = DataMessages.IMU) -> MipsField:
         """Reloads saved settings onto device."""
         cmd = MipsField(0x04, msg_type.fmt_cmd,
-                        [MessageFormatSelectors.LOAD.value, 0x00])
+                        [FunctionSelectors.LOAD.value, 0x00])
         data = self._send_command(MipsPacket(0x0c, [cmd]))
         return data.convert_payload()
     
@@ -597,7 +772,7 @@ class Microstrain3DM:
             self, msg_type: DataMessages = DataMessages.IMU) -> MipsField:
         """Resets the message format to factory defaults."""
         cmd = MipsField(0x04, msg_type.fmt_cmd,
-                        [MessageFormatSelectors.RESET.value, 0x00])
+                        [FunctionSelectors.RESET.value, 0x00])
         data = self._send_command(MipsPacket(0x0c, [cmd]))
         # Clear the stored version of the format.
         self._imu_fmt = None
@@ -606,13 +781,101 @@ class Microstrain3DM:
         return data.convert_payload()
     
     def poll_data(
-            self, msg_type: DataMessages = DataMessages.IMU) -> MipsField:
+            self, msg_type: DataMessages = DataMessages.IMU,
+            suppress_nack: int = 1,  # Default to no nack.
+            descriptors: Optional[list[int]] = None
+            ) -> list[collections.namedtuple]:
         """Gets a set of values from device data type in current format."""
+        if descriptors is not None:
+            # Create the field data for the requested format using zero as the
+            # base rate to make sure the descriptor gets set to the appropriate
+            # reserve value of 0.
+            num_descriptors = len(descriptors)
+            fmt_field = self._generate_field_for_descriptors(
+                msg_type.poll_cmd, 0, suppress_nack, descriptors,
+                num_descriptors * [1])
+        else:
+            fmt_field = MipsField(0x04, msg_type.poll_cmd,
+                                   [suppress_nack, 0x00])
         # The poll request suppresses the normal (n)ack reply with option = 1.
-        data = self._send_and_parse_reply(
-            MipsPacket(0x0c,
-                       [MipsField(0x04, msg_type.poll_cmd, [0x01, 0x00])]))
+        data = self._send_and_parse_reply(MipsPacket(0x0c, [fmt_field]))
         return data
+    
+    def ekf_auto_init(self, func_sel: FunctionSelectors,
+                      enable: int = 1) -> collections.namedtuple:
+        """Enables auto-initialization of filter on device.
+        
+        If enabled (1), the filter will auto-initialize with the heading source
+        provided.
+
+        Args:
+          func_sel: how to apply the setting.
+          enable: the value to enable (1) or disable (0) auto-initialize.
+        """
+        cmd = MipsPacket(0x0d, [MipsField(0x04, 0x19,
+                                          [func_sel.value, enable])])
+        data = self._send_and_parse_reply(cmd)
+        return data[0]
+    
+    def ekf_euler_init(self, euler_vec: Optional[ReplyFormats.Vector] = None
+                       ) -> collections.namedtuple:
+        """Initializes EKF attitude with euler angles provided."""
+        if euler_vec is None:
+            # Fetch angles from device.
+            euler_vec = self.poll_data(descriptors=[0x0c])[0]
+        print(f'Initializing ekf with {euler_vec}')
+        vec_bytes = struct.pack('>fff', *euler_vec)
+        cmd = MipsPacket(0x0d, [MipsField(0x0e, 0x02, data_bytes=vec_bytes)])
+        data = self._send_and_parse_reply(cmd)
+        return data[0]
+
+    def ekf_heading_source(
+            self, func_sel: FunctionSelectors,
+            option: EkfHeadingUpdate) -> collections.namedtuple:
+        """Sets source of heading updates for EKF.
+        
+        Select the heading source, then enable auto-initialization of the
+        filter to transition into run mode from init.
+
+        Args:
+          func_sel: how the setting shall be applied.
+          option: the heading update source to use.
+        Returns:
+          The ack/nack message from the command.
+        """
+        cmd = MipsPacket(0x0d, [MipsField(0x04, 0x18,
+                                          [func_sel.value, option.value])])
+        data = self._send_and_parse_reply(cmd)
+        return data[0]       
+    
+    def capture_gyro_bias(self, sample_duration_ms: int):
+        """Captures gyro bias to device and returns value.
+        
+        Note - the device should be still during this operation. The vector
+        of gyro bias will be returned when complete.
+
+        Args:
+          sample_duration_ms: the amount of time to collect bias for.
+        Returns:
+          The vector of bias calculated for the gyro.
+        """
+        if not (1000 <= sample_duration_ms <= 30000):
+            raise ValueError(f'Time span {sample_duration_ms} not in range.')
+        sample_bytes = struct.pack('>H', sample_duration_ms)
+        cmd = MipsPacket(0x0c, [MipsField(0x04, 0x39, data_bytes=sample_bytes)])
+        print(f'Sleeping for {sample_duration_ms} ms to capture bias.')
+        # Response will show up after the sleep period.
+        response = self._send_command(cmd)
+        # Return the ack + bias vector estimated by the filter.
+        return response.convert_payload()
+
+    def set_dynamics_mode(
+            self, mode: EkfDynamicsMode,
+            func_selector: FunctionSelectors) -> collections.namedtuple:
+        cmd = MipsPacket(0x0d, [MipsField(0x04, 0x10,
+                                          [func_selector.value, mode.value])])
+        data = self._send_and_parse_reply(cmd)
+        return data[0]
 
     def collect_data_stream(
             self,
@@ -620,7 +883,9 @@ class Microstrain3DM:
         """Collects packets for a time and returns data split to fields.
         
         Prior to calling this, you must have put a format onto the device. This
-        function will handle starting and stopping the data streaming.
+        function will handle starting and stopping the data streaming. Note that
+        on windows, timing precision limits us to about 50 Hz, the full 500 Hz
+        is achievable on linux.
 
         Args:
           duration_sec: the amount of time to collect data for.
@@ -629,12 +894,13 @@ class Microstrain3DM:
         """
         self.device_resume()
         t_end = time.time() + duration_sec
+        t_now = 0
         payload_recv = []
-        while (t_now := time.time()) < t_end:
+        while time.time() < t_end:
             # Read all packets available.
             while self._ser.in_waiting:
                 new_packet = self._read_one_packet()
-                new_packet.recv_time = t_now
+                new_packet.recv_time = time.time()
                 payload_recv.append(new_packet)
             time.sleep(0.001)
         self.device_idle()
@@ -682,15 +948,16 @@ class Microstrain3DM:
                 entries = [['time (s)'] + headers[rate]]
                 for d in data:
                     t = str(d.recv_time)
+                    new_entry = [t]
                     for f, val in zip(d.payload, d.convert_payload()):
                         # For each payload field, check if it is at this rate.
                         if f.field_desc in descriptors:
                             # Store time once per entry, this keeps messages
                             # at a lower rate from getting the faster time
                             # interval of another measurement.
-                            if t not in entries[-1]:
-                                entries.append([t])
-                            entries[-1].extend(val)
+                            new_entry.extend(val)
+                    if len(new_entry) > 1:
+                        entries.append(new_entry)
                 # Write to file.
                 with open(os.path.join(folder, fname), 'w') as dest:
                     for entry in entries:

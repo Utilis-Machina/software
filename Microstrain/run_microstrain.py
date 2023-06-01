@@ -30,6 +30,10 @@ if __name__ == '__main__':
                         help='Get model and serial info from device.')
     parser.add_argument('-test', action='store_true',
                         help='Run built-in test and print results.')
+    parser.add_argument('-rates', action='store_true',
+                        help='Get base rates for device.')
+    parser.add_argument('-baud_test', action='store_true',
+                        help='Test setting different baud rates.')
     # IMU commands.
     parser.add_argument('-imu', action='store_true',
                         help='Get accelerometer data from IMU.')
@@ -37,22 +41,34 @@ if __name__ == '__main__':
                         help='Get all data from IMU.')
     parser.add_argument('-imu_stream', action='store_true',
                         help='Stream data from IMU.')
-    parser.add_argument('-stream_sec', type=float, default=5.0,
+    parser.add_argument('-sample_sec', type=float, default=5.0,
                         help='Number of seconds to collect data for.')
     parser.add_argument('-pressure', action='store_true',
                         help='Get pressure data from IMU.') 
     # GPS commands.
     parser.add_argument('-gps', action='store_true',
-                        help='Get accelerometer data from GPS.')
+                        help='Get GPS data from unit.')
     parser.add_argument('-gps_all', action='store_true',
                         help='Get all data from GPS.')
+    # EKF commands.
+    parser.add_argument('-ekf', action='store_true',
+                        help='Get EKF data from unit.')
+    parser.add_argument('-ekf_euler_init', action='store_true',
+                        help='Initialize EKF with Euler angles.')
+    parser.add_argument('-ekf_all', action='store_true',
+                        help='Get all EKF data from unit.')
     # Field testing cases.
     parser.add_argument('-stream_test', action='store_true',
                         help='Stream data to file in multiple formats.')
     parser.add_argument('-stream_reset', action='store_true',
                         help='Reset message formats on device.')
+    parser.add_argument('-stream_high_rate', action='store_true',
+                        help='Collect high rate data from IMU.')
+    parser.add_argument('-gyro_bias', action='store_true',
+                        help='Collect and store gyro bias for IMU.')    
     # These are generic settings for the device connection.
-    parser.add_argument('-baud', choices=[9600, 19200, 38400, 57600, 115200],
+    parser.add_argument('-baud', choices=[9600, 19200, 38400, 57600, 115200,
+                                          230400, 460800, 921600],
                         type=int, default=115200, help='Baud rate for device.')
     parser.add_argument('-port', default='COM5',
                         help=('Specify port for machine (COM3 for windows, '
@@ -78,6 +94,18 @@ if __name__ == '__main__':
     if args.test:
         print(f'Running built-in-test for device.')
         print(f'Result: {unit.device_built_in_test()}')
+    if args.rates:
+        print('Collecting base rates for device.')
+        imu = unit.device_base_rate(microstrain.DataMessages.IMU)
+        gps = unit.device_base_rate(microstrain.DataMessages.GPS)
+        ekf = unit.device_base_rate(microstrain.DataMessages.EKF)
+        print(f'IMU: {imu}, GPS: {gps}, EKF: {ekf} Hz')
+    if args.baud_test:
+        new_rate = 460800
+        print(f'Setting baud rate to {new_rate}')
+        unit.device_baud(new_rate)
+        print('Rate changed, trying ping. Note - persists until powered off.')
+        print(f'{unit.device_ping()}')
     if args.imu:
         print(f'Collecting data from IMU.')
         unit.set_msg_fmt(descriptors=[0x04, 0x11])
@@ -92,9 +120,9 @@ if __name__ == '__main__':
                          rate_hz = [1.0])
         print(f'Result: {unit.poll_data()}')
     if args.imu_stream:
-        print(f'Streaming IMU data for {args.stream_sec} seconds.')
+        print(f'Streaming IMU data for {args.sample_sec} seconds.')
         unit.set_msg_fmt(descriptors=[0x04, 0x10], rate_hz = [1.0, 2.0])
-        data = unit.collect_data_stream(args.stream_sec)
+        data = unit.collect_data_stream(args.sample_sec)
         print(f'Received {len(data)} samples.')
         processed_data = microstrain.process_mips_packets(data)
         print(f'Result: {processed_data}')
@@ -104,11 +132,20 @@ if __name__ == '__main__':
         unit.reset_msg_fmt(microstrain.DataMessages.GPS)
         unit.reset_msg_fmt(microstrain.DataMessages.EKF)
     if args.stream_test:
-        print(f'Streaming data for {args.stream_sec} seconds.')
+        print(f'Streaming data for {args.sample_sec} seconds.')
         unit.set_msg_fmt(microstrain.DataMessages.IMU,
                          [0x04, 0x10], rate_hz = [1.0, 2.0])
         unit.set_msg_fmt(microstrain.DataMessages.GPS, [0x03], [1.0])
-        data = unit.collect_data_stream(args.stream_sec)
+        unit.set_msg_fmt(microstrain.DataMessages.EKF,
+                         [0x10, 0x06, 0x0b], [5.0])
+        data = unit.collect_data_stream(args.sample_sec)
+        unit.write_stream_data()
+        print(f'Results written to file.')
+    if args.stream_high_rate:
+        print(f'Streaming data for {args.sample_sec} seconds.')
+        unit.set_msg_fmt(microstrain.DataMessages.IMU,
+                         [0x04], rate_hz = [50.])
+        data = unit.collect_data_stream(args.sample_sec)
         unit.write_stream_data()
         print(f'Results written to file.')
     if args.gps:
@@ -120,6 +157,27 @@ if __name__ == '__main__':
         unit.set_msg_fmt(microstrain.DataMessages.GPS,
                          [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], rate_hz = [0.1])
         print(f'Result: {unit.poll_data(microstrain.DataMessages.GPS)}')
+    if args.ekf:
+        print(f'Collecting EKF data.')
+        unit.set_msg_fmt(microstrain.DataMessages.EKF, [0x10], [1.0])
+        data = unit.poll_data(microstrain.DataMessages.EKF)[0]
+        print(f'{data}')
+        data_messages = microstrain.ReplyFormats.decode_ekf_status(data)
+        print(f'Result: {data_messages}')
+    if args.ekf_euler_init:
+        print(f'Initialize EKF with Euler angles.')
+        unit.ekf_euler_init()
+    if args.ekf_all:
+        print(f'Collecting lots of EKF data.')
+        unit.set_msg_fmt(microstrain.DataMessages.EKF,
+                         [16, 17, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+                          12, 13, 14, 15, 18, 19, 20, 21, 22, 23, 24], [1.0])
+        data = unit.poll_data(microstrain.DataMessages.EKF)
+        print(f'{data}')            
+    if args.gyro_bias:
+        print(f'Sampling gyro bias for device for {args.sample_sec} seconds.')
+        bias = unit.capture_gyro_bias(args.sample_sec)
+        print(bias)
 
     if args.raw:
         print('Writes from command.')

@@ -20,13 +20,31 @@ def test_mips_field_as_iter():
     sample = microstrain.MipsField(0x06, 0x11, data_bytes=b'\x02\x04\x06\x08')
     assert list(sample) == [0x06, 0x11, 0x02, 0x04, 0x06, 0x08]
 
+@pytest.mark.parametrize('name', ['imu', 'gps', 'ekf'])
+def test_formats_and_units_same_length(name):
+    fmts = getattr(microstrain.ReplyFormats, name + '_set')
+    units = getattr(microstrain.ReplyFormats, name + '_units')
+    for ind, vals in units.items():
+        num_units = len(vals)
+        cur_fmt, cur_obj = fmts[ind]
+        # We want to ignore things like the byte symbol, and numbers that
+        # specify the byte length of strings when comparing the two. Thus apply
+        # a filter.
+        num_fmts = len(list(filter(str.isalpha, cur_fmt)))
+        # To unpack properly we need one field per number returned.
+        num_fields = len(cur_obj._fields)
+        assert num_fmts == num_units, f'{name}[{ind}] mismatch!'
+        assert num_fields == num_units, f'{name}[{ind}] field mismatch!'
+
 @pytest.mark.parametrize(
     'msg_type, field_len, field_desc, data_bytes, expect', [
         (microstrain.DataMessages.IMU.msg_ind, 0x0e, 0x04,
          b'\x3e\x7a\x63\xa0xbb\x8e\x3b\x29\x7f\xe5\xbf7f',
          ['Accel g', 'Accel g', 'Accel g']),
         (microstrain.DataMessages.GPS.msg_ind, 0x08, 0x0b,
-         b'\x00\x01\x00\x02\x00\x03', ['n/a', 'count', 'n/a', 'n/a'])]
+         b'\x00\x01\x00\x02\x00\x03', ['n/a', 'count', 'n/a', 'n/a']),
+         (microstrain.DataMessages.EKF.msg_ind, 0x10, 0x30,
+          14*b'\x00', ['m', 'm', 'm', 'n/a'])]
 )
 def test_get_units_for_data_message(msg_type, field_len, field_desc, data_bytes,
                                     expect):
@@ -34,6 +52,16 @@ def test_get_units_for_data_message(msg_type, field_len, field_desc, data_bytes,
                                        data_bytes=data_bytes)
     units = microstrain.ReplyFormats.get_field_units(msg_type, field_data)
     assert units == expect
+
+def test_decode_ekf_status_init_mode():
+    status = microstrain.ReplyFormats.FilterState(1, 1, 0x3000)
+    result = microstrain.ReplyFormats.decode_ekf_status(status)
+    assert len(result) == 2
+
+def test_decode_ekf_status_run_mode():
+    status = microstrain.ReplyFormats.FilterState(2, 1, 0x2ffb)
+    result = microstrain.ReplyFormats.decode_ekf_status(status)
+    assert len(result) == 12
 
 @pytest.mark.parametrize(
     'payload_bytes, field_list', [
@@ -159,6 +187,31 @@ def test_device_command(mocker, command, expected_bytes):
     send_packet = mock_send.call_args[0][0]
     assert send_packet.as_bytes == expected_bytes
 
+def test_device_base_rate(mocker):
+    mock_cmd = mocker.patch('microstrain.Microstrain3DM._send_command')
+    mock_cmd.return_value = microstrain.MipsPacket(
+        0x0c,
+        [microstrain.MipsField(0x04, 0xf1, [0x06, 0x00]),
+         microstrain.MipsField(0x04, 0x83, [0x00, 0x64])])
+    unit = microstrain.Microstrain3DM()
+    rate = unit.device_base_rate(microstrain.DataMessages.IMU)
+    cmd_packet = mock_cmd.call_args[0][0]
+    assert cmd_packet.as_bytes == b'\x75\x65\x0c\x02\x02\x06\xf0\xf7'
+    assert rate == 100
+
+def test_set_baud_rate(mocker):
+    mock_send = mocker.patch('microstrain.Microstrain3DM._send_and_parse_reply')
+    unit = microstrain.Microstrain3DM()
+    unit._baud_rate = 9600
+    unit.device_baud(115200)
+    send_packet = mock_send.call_args[0][0]
+    expect = b'\x75\x65\x0c\x07\x07\x40\x01\x00\x01\xc2\x00\xf8\xda'
+    assert send_packet.as_bytes == expect 
+
+def test_set_baud_raises_for_invalid_rate():
+    with pytest.raises(ValueError):
+        microstrain.Microstrain3DM().device_baud(0)
+
 def test_set_imu_format(mocker):
     mock_send = mocker.patch('microstrain.Microstrain3DM._send_and_parse_reply')
     unit = microstrain.Microstrain3DM()
@@ -181,7 +234,16 @@ def test_set_estimation_filter_format(mocker):
     unit.set_msg_fmt(microstrain.DataMessages.EKF, [0x01, 0x02], [500.])
     send_packet = mock_send.call_args[0][0]
     expect = b'\x75\x65\x0c\x0a\x0a\x0a\x01\x02\x01\x00\x01\x02\x00\x01\x0c\x6a'
-    assert send_packet.as_bytes == expect  
+    assert send_packet.as_bytes == expect
+
+def test_set_dynamics_mode(mocker):
+    mock_send = mocker.patch('microstrain.Microstrain3DM._send_and_parse_reply')
+    unit = microstrain.Microstrain3DM()
+    unit.set_dynamics_mode(microstrain.EkfDynamicsMode.PORTABLE,
+                           microstrain.FunctionSelectors.NEW)
+    send_packet = mock_send.call_args[0][0]
+    expect = b'\x75\x65\x0d\x04\x04\x10\x01\x01\x01\x10'
+    assert send_packet.as_bytes == expect    
 
 def test_get_msg_format_for_gps(mocker):
     mock_cmd = mocker.patch('microstrain.Microstrain3DM._send_command')
@@ -227,6 +289,53 @@ def test_poll_data_for_estimation_filter(mocker):
     send_packet = mock_send.call_args[0][0]
     expect = b'\x75\x65\x0c\x04\x04\x03\x01\x00\xf2\xe2'
     assert send_packet.as_bytes == expect
+
+def test_poll_data_for_imu_format(mocker):
+    mock_send = mocker.patch('microstrain.Microstrain3DM._send_and_parse_reply')
+    unit = microstrain.Microstrain3DM()
+    unit.poll_data(microstrain.DataMessages.IMU, suppress_nack=0,
+                   descriptors=[0x04, 0x05])
+    send_packet = mock_send.call_args[0][0]
+    expect = b'\x75\x65\x0c\x0a\x0a\x01\x00\x02\x04\x00\x00\x05\x00\x00\x06\x27'
+    assert send_packet.as_bytes == expect   
+
+def test_ekf_auto_initialize(mocker):
+    mock_send = mocker.patch('microstrain.Microstrain3DM._send_and_parse_reply')
+    unit = microstrain.Microstrain3DM()
+    unit.ekf_auto_init(microstrain.FunctionSelectors.NEW, 1)
+    send_packet = mock_send.call_args[0][0]
+    expect = b'\x75\x65\x0d\x04\x04\x19\x01\x01\x0a\x2b'
+    assert send_packet.as_bytes == expect
+
+def test_ekf_euler_initialize(mocker):
+    mock_send = mocker.patch('microstrain.Microstrain3DM._send_and_parse_reply')
+    unit = microstrain.Microstrain3DM()
+    unit.ekf_euler_init(microstrain.ReplyFormats.Vector(0, 0, 0))
+    send_packet = mock_send.call_args[0][0]
+    expect = b'\x75\x65\x0d\x0e\x0e\x02' + 12*b'\x00' + b'\x05\x6f'
+    assert send_packet.as_bytes == expect
+
+def test_ekf_heading_update_source(mocker):
+    mock_send = mocker.patch('microstrain.Microstrain3DM._send_and_parse_reply')
+    unit = microstrain.Microstrain3DM()
+    unit.ekf_heading_source(microstrain.FunctionSelectors.NEW,
+                            microstrain.EkfHeadingUpdate.MAG)
+    send_packet = mock_send.call_args[0][0]
+    expect = b'\x75\x65\x0d\x04\x04\x18\x01\x01\x09\x28'
+    assert send_packet.as_bytes == expect
+
+def test_capture_gyro_bias_raises_for_out_of_range_value(mocker):
+    with pytest.raises(ValueError):
+        microstrain.Microstrain3DM().capture_gyro_bias(0)
+
+def test_capture_gyro_bias(mocker):
+    mock_cmd = mocker.patch('microstrain.Microstrain3DM._send_command')
+    mock_sleep = mocker.patch('microstrain.time.sleep')
+    unit = microstrain.Microstrain3DM()
+    unit.capture_gyro_bias(0x2710)  # 10 seconds.
+    cmd_packet = mock_cmd.call_args[0][0]
+    expect = b'\x75\x65\x0c\x04\x04\x39\x27\x10\x5e\xe0'
+    assert cmd_packet.as_bytes == expect
 
 def test_create_headers_for_file():
     unit = microstrain.Microstrain3DM()
