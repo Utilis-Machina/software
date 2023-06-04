@@ -10,6 +10,7 @@ as an argument if needed.
 """
 import argparse
 import microstrain
+import packets
 import sys
 
 LICENSE_INFO = """
@@ -96,9 +97,9 @@ if __name__ == '__main__':
         print(f'Result: {unit.device_built_in_test()}')
     if args.rates:
         print('Collecting base rates for device.')
-        imu = unit.device_base_rate(microstrain.DataMessages.IMU)
-        gps = unit.device_base_rate(microstrain.DataMessages.GPS)
-        ekf = unit.device_base_rate(microstrain.DataMessages.EKF)
+        imu = unit.device_base_rate(packets.DataMessages.IMU)
+        gps = unit.device_base_rate(packets.DataMessages.GPS)
+        ekf = unit.device_base_rate(packets.DataMessages.EKF)
         print(f'IMU: {imu}, GPS: {gps}, EKF: {ekf} Hz')
     if args.baud_test:
         new_rate = 460800
@@ -124,59 +125,59 @@ if __name__ == '__main__':
         unit.set_msg_fmt(descriptors=[0x04, 0x10], rate_hz = [1.0, 2.0])
         data = unit.collect_data_stream(args.sample_sec)
         print(f'Received {len(data)} samples.')
-        processed_data = microstrain.process_mips_packets(data)
+        processed_data = packets.process_mips_packets(data)
         print(f'Result: {processed_data}')
     if args.stream_reset:
         print(f'Reset message formats.')
-        unit.reset_msg_fmt(microstrain.DataMessages.IMU)
-        unit.reset_msg_fmt(microstrain.DataMessages.GPS)
-        unit.reset_msg_fmt(microstrain.DataMessages.EKF)
+        unit.reset_msg_fmt(packets.DataMessages.IMU)
+        unit.reset_msg_fmt(packets.DataMessages.GPS)
+        unit.reset_msg_fmt(packets.DataMessages.EKF)
     if args.stream_test:
         print(f'Streaming data for {args.sample_sec} seconds.')
-        unit.set_msg_fmt(microstrain.DataMessages.IMU,
+        unit.set_msg_fmt(packets.DataMessages.IMU,
                          [0x04, 0x10], rate_hz = [1.0, 2.0])
-        unit.set_msg_fmt(microstrain.DataMessages.GPS, [0x03], [1.0])
-        unit.set_msg_fmt(microstrain.DataMessages.EKF,
+        unit.set_msg_fmt(packets.DataMessages.GPS, [0x03], [1.0])
+        unit.set_msg_fmt(packets.DataMessages.EKF,
                          [0x10, 0x06, 0x0b], [5.0])
         data = unit.collect_data_stream(args.sample_sec)
         unit.write_stream_data()
         print(f'Results written to file.')
     if args.stream_high_rate:
         print(f'Streaming data for {args.sample_sec} seconds.')
-        unit.set_msg_fmt(microstrain.DataMessages.IMU,
+        unit.set_msg_fmt(packets.DataMessages.IMU,
                          [0x04], rate_hz = [50.])
         data = unit.collect_data_stream(args.sample_sec)
         unit.write_stream_data()
         print(f'Results written to file.')
     if args.gps:
         print(f'Collecting example data from GPS.')
-        unit.set_msg_fmt(microstrain.DataMessages.GPS, [4], [1.0])
-        print(f'Result: {unit.poll_data(microstrain.DataMessages.GPS)}')
+        unit.set_msg_fmt(packets.DataMessages.GPS, [4], [1.0])
+        print(f'Result: {unit.poll_data(packets.DataMessages.GPS)}')
     if args.gps_all:
         print(f'Collecting example data from GPS.')
-        unit.set_msg_fmt(microstrain.DataMessages.GPS,
+        unit.set_msg_fmt(packets.DataMessages.GPS,
                          [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], rate_hz = [0.1])
-        print(f'Result: {unit.poll_data(microstrain.DataMessages.GPS)}')
+        print(f'Result: {unit.poll_data(packets.DataMessages.GPS)}')
     if args.ekf:
         print(f'Collecting EKF data.')
-        unit.set_msg_fmt(microstrain.DataMessages.EKF, [0x10], [1.0])
-        data = unit.poll_data(microstrain.DataMessages.EKF)[0]
+        unit.set_msg_fmt(packets.DataMessages.EKF, [0x10], [1.0])
+        data = unit.poll_data(packets.DataMessages.EKF)[0]
         print(f'{data}')
-        data_messages = microstrain.ReplyFormats.decode_ekf_status(data)
+        data_messages = packets.ReplyFormats.decode_ekf_status(data)
         print(f'Result: {data_messages}')
     if args.ekf_euler_init:
         print(f'Initialize EKF with Euler angles.')
         unit.ekf_euler_init()
     if args.ekf_all:
         print(f'Collecting lots of EKF data.')
-        unit.set_msg_fmt(microstrain.DataMessages.EKF,
+        unit.set_msg_fmt(packets.DataMessages.EKF,
                          [16, 17, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
                           12, 13, 14, 15, 18, 19, 20, 21, 22, 23, 24], [1.0])
-        data = unit.poll_data(microstrain.DataMessages.EKF)
+        data = unit.poll_data(packets.DataMessages.EKF)
         print(f'{data}')            
     if args.gyro_bias:
         print(f'Sampling gyro bias for device for {args.sample_sec} seconds.')
-        bias = unit.capture_gyro_bias(args.sample_sec)
+        bias = unit.capture_gyro_bias(int(args.sample_sec * 1e3))
         print(bias)
 
     if args.raw:
