@@ -311,7 +311,7 @@ class ReplyFormats:
     UcEuler = collections.namedtuple('UcLLH', 
         [f'uc_{f}_1sig' for f in ['roll', 'pitch', 'yaw']] + ['flags'])
     UcVec = collections.namedtuple('UcVec',
-        [f'uc_x_1sig', 'uc_y_1sig', 'uc_z_1sig', 'flags'])
+        ['uc_x_1sig', 'uc_y_1sig', 'uc_z_1sig', 'flags'])
     Wgs84 = collections.namedtuple('Wgs84', ['grav_mag', 'flags'])
     UcQuat = collections.namedtuple('UcQuat',
         [f'uc_{f}_1sig' for f in ['q0', 'q1', 'q2', 'q3']] + ['flags'])
@@ -421,7 +421,27 @@ class ReplyFormats:
         return units[mips_field.field_desc]
     
     @classmethod
-    def decode_ekf_status(self, status: FilterState) -> list[str]:
+    def decode(self, data: collections.namedtuple) -> list[str]:
+        """Converts data message into human readable form."""
+        decoder_funcs = {
+            self.FilterState.__name__: self._decode_ekf_status,
+            self.GPSFix.__name__: self._decode_gps_fix_information,
+            self.GpsHwStatus.__name__: self._decode_gps_hw_status,
+        }
+        func = decoder_funcs[type(data).__name__]
+        return func(data)
+
+    @classmethod
+    def _apply_decoder(self, decoder: dict[int, str], val: int) -> list[str]:
+        """Returns human readable description of integer value."""
+        messages = []
+        for key, msg in decoder.items():
+            if key & val:
+                messages.append(msg)
+        return messages
+    
+    @classmethod
+    def _decode_ekf_status(self, status: FilterState) -> list[str]:
         """Translates EKF messages into human readable form."""
         run_decoder = {
             0x0001: 'IMU Unavailable',
@@ -441,13 +461,71 @@ class ReplyFormats:
             0x1000: 'Attitude not initialized',
             0x2000: 'Position & Velocity not initialized'
             }
-        state_str = ['startup', 'init', 'run', 'error'][status.state]
-        decoder = {0x01: init_decoder, 0x02: run_decoder}[status.state]
+        mode_decoder = {
+            0x00: 'startup',
+            0x01: 'init',
+            0x02: 'run',
+            0x03: 'error'
+        }
+        state_str = self._apply_decoder(mode_decoder, status.state)[0]
         print(f'EKF in {state_str} phase.')
-        messages = []
-        for key, msg in decoder.items():
-            if key & status.flags:
-                messages.append(msg)
+ 
+        decoder = {0x01: init_decoder, 0x02: run_decoder}[status.state]
+        return self._apply_decoder(decoder, status.flags)
+    
+    @classmethod
+    def _decode_gps_fix_information(self, status: GPSFix) -> list[str]:
+        """Parses fields of GPS fix information."""
+        valid_decoder = {
+            0x0001: "Fix type valid",
+            0x0002: "Number of SVs valid",
+            0x0004: "Fix flags valid",
+        }
+        type_decoder = {
+            0x00: '3D Fix',
+            0x01: '2D Fix',
+            0x02: 'Time only',
+            0x03: 'None',
+            0x04: 'Invalid',
+        }
+        flag_decoder = {
+            0x0001: 'SBAS corrections used',
+            0x0002: 'Differential (DGPS) corrections used'
+        }
+        messages = self._apply_decoder(type_decoder, status.fix_type)
+        messages.extend(self._apply_decoder(flag_decoder, status.fix_flags))
+        messages.extend(self._apply_decoder(valid_decoder, status.valid_flags))
+        return messages
+
+    @classmethod
+    def _decode_gps_hw_status(self, status: GpsHwStatus) -> list[str]:
+        """Parses fields of GPS HW Status information."""
+        valid_decoder = {
+            0x0001: 'Sensor state valid',
+            0x0002: 'Antenna state valid',
+            0x0004: 'Antenna power valid',
+        }
+        sensor_state = {
+            0x00: 'Sensor off',
+            0x01: 'Sensor on',
+            0x02: 'Sensor state unknown',
+        }
+        antenna_state = {
+            0x01: 'Antenna init',
+            0x02: 'Antenna short',
+            0x03: 'Antenna open',
+            0x04: 'Antenna good',
+            0x05: 'Antenna state unknown',
+        }
+        antenna_power = {
+            0x00: 'Antenna off',
+            0x01: 'Antenna on',
+            0x02: 'Antenna power unknown',
+        }
+        messages = self._apply_decoder(sensor_state, status.sensor_state)
+        messages.extend(self._apply_decoder(antenna_state, status.antenna_state))
+        messages.extend(self._apply_decoder(antenna_power, status.antenna_power))
+        messages.extend(self._apply_decoder(valid_decoder, status.flags))
         return messages
 
 
