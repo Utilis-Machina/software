@@ -163,7 +163,7 @@ if __name__ == '__main__':
         unit.set_msg_fmt(packets.DataMessages.EKF, [0x10], [1.0])
         data = unit.poll_data(packets.DataMessages.EKF)[0]
         print(f'{data}')
-        data_messages = packets.ReplyFormats.decode_ekf_status(data)
+        data_messages = packets.ReplyFormats.decode(data)
         print(f'Result: {data_messages}')
     if args.ekf_euler_init:
         print(f'Initialize EKF with Euler angles.')

@@ -49,13 +49,23 @@ def test_get_units_for_data_message(msg_type, field_len, field_desc, data_bytes,
 
 def test_decode_ekf_status_init_mode():
     status = packets.ReplyFormats.FilterState(1, 1, 0x3000)
-    result = packets.ReplyFormats.decode_ekf_status(status)
+    result = packets.ReplyFormats.decode(status)
     assert len(result) == 2
 
 def test_decode_ekf_status_run_mode():
     status = packets.ReplyFormats.FilterState(2, 1, 0x2ffb)
-    result = packets.ReplyFormats.decode_ekf_status(status)
+    result = packets.ReplyFormats.decode(status)
     assert len(result) == 12
+
+def test_decode_gps_fix_info():
+    status = packets.ReplyFormats.GPSFix(0, 7, 0, 7)
+    result = packets.ReplyFormats.decode(status)
+    assert len(result) == 3
+
+def test_decode_gps_hw_status():
+    status = packets.ReplyFormats.GpsHwStatus(1, 4, 1, 7)
+    result = packets.ReplyFormats.decode(status)
+    assert len(result) == 7
 
 @pytest.mark.parametrize(
     'payload_bytes, field_list', [
