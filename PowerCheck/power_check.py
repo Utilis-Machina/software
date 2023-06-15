@@ -31,6 +31,7 @@ available device. The code was tested on windows and linux, using the
 FW version 1.27.
 """
 import collections
+import logging
 import os
 import serial
 import struct
@@ -233,8 +234,8 @@ class PowerCheck:
             packet_checksum = packet_data[-1]
             # Validate all data received.
             if packet_checksum != sum(packet_len + packet_data[:-1]) & 0xff:
-                print('Checksum mismatch:')
-                print(packet_len + packet_data)
+                error = f'Checksum mismatch: {packet_len + packet_data}'
+                logging.warning(error)
                 time.sleep(0.25)  # Sleep to trigger a resend.
             else:
                 self._read_buffer.append(packet_len + packet_data)
@@ -389,20 +390,28 @@ class PowerCheck:
         self._monitor_file = open(monitor_path, 'w')
         self._monitor_file.write(
             'time,' + ','.join(self._LOG_VALUES) + '\n')
+        
+    def get_single_status(self) -> str:
+        """Gets and processes a single status message."""
+        status = self.get_status()
+        logging.debug(status)
+        new_line = f'{time.time()},{self.status_log_str(status)}\n'
+        if self._monitor_file:
+            self._monitor_file.write(new_line)
+        return new_line
 
     def stream_status(self, sample_period_s: float = 1.0,
-                      num_samples: int = 10, echo_on: bool = False):
+                      num_samples: int = 10):
         """Streams status from device to screen and/or file."""
-        write_fmt = '{:f}' + ',{:d}'*self._num_log_values + '\n'
-        for i in range(num_samples):
-            status = self.get_status()
-            if echo_on:
-                print(status)
+        for _ in range(num_samples):
+            self.get_single_status()
             time.sleep(sample_period_s)
-            if self._monitor_file:
-                new_entry = [time.time()] + [getattr(status, e)
-                                             for e in self._LOG_VALUES]
-                self._monitor_file.write((write_fmt).format(*new_entry))
+        logging.debug('Powercheck stream complete.')
+
+    def status_log_str(self, status: Status) -> str:
+        """Converts status message to a loggable string."""
+        entries = [str(getattr(status, e)) for e in self._LOG_VALUES]
+        return  ','.join(entries)
 
     def clear_log_data(self):
         """Clears log data stored on EEPROM of device."""
