@@ -68,8 +68,7 @@ if __name__ == '__main__':
     parser.add_argument('-gyro_bias', action='store_true',
                         help='Collect and store gyro bias for IMU.')    
     # These are generic settings for the device connection.
-    parser.add_argument('-baud', choices=[9600, 19200, 38400, 57600, 115200,
-                                          230400, 460800, 921600],
+    parser.add_argument('-baud', choices=microstrain.Microstrain3DM.BAUD_RATES,
                         type=int, default=115200, help='Baud rate for device.')
     parser.add_argument('-port', default='COM5',
                         help=('Specify port for machine (COM3 for windows, '
