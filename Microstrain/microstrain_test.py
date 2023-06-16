@@ -14,13 +14,21 @@ def test_read_one_packet():
     unit = microstrain.Microstrain3DM()
     # Slice the read sequence from the packet to make sure they all are
     # read as bytes instead of ints.
-    return_vals = (packet[:1], packet[1:2], packet[2:-2], packet[-2:])
+    return_vals = (b'\x75', b'\x65', packet[:2], packet[2:-2], packet[-2:])
     unit._ser.read.side_effect = return_vals
     result = unit._read_one_packet()
+    # We don't care about the timestamp recorded, so use mock.ANY.
     mips_expected = packets.MipsPacket(0x01,[
         packets.MipsField(0x04, 0xf1, [0x05, 0x00]),
-        packets.MipsField(0x06, 0x83, [1, 2, 3, 4])])
+        packets.MipsField(0x06, 0x83, [1, 2, 3, 4])], mock.ANY)
     assert result == mips_expected
+
+def test_get_single_packet(mocker):
+    mock_read = mocker.patch('microstrain.Microstrain3DM._read_one_packet')
+    unit = microstrain.Microstrain3DM()
+    unit._ser.in_waiting = True
+    unit.get_single_packet()
+    mock_read.assert_called_once()
 
 def test_ping_command(mocker):
     error_expected = 0x00
@@ -48,7 +56,8 @@ def test_ping_command(mocker):
     ]
 )
 def test_device_command(mocker, command, expected_bytes):
-    mock_send = mocker.patch('microstrain.Microstrain3DM._send_and_parse_reply')
+    mock_send = mocker.patch(
+        'microstrain.Microstrain3DM._send_and_parse_reply')
     unit = microstrain.Microstrain3DM()
     getattr(unit, command)()
     send_packet = mock_send.call_args[0][0]
@@ -238,4 +247,12 @@ def test_write_stream_data(mocker):
     # Make sure import info in file name.
     file_destination = mock_open.call_args[0][0]
     assert all(['1.0' in file_destination, 'imu' in file_destination])
-    
+
+def test_load_data_stream(mocker):
+    mock_data = mocker.mock_open(read_data=bytes(8))
+    mocker.patch('builtins.open', mock_data)
+    mock_get = mocker.patch(
+        'microstrain.Microstrain3DM._collect_packet_from_source')
+    unit = microstrain.Microstrain3DM()
+    unit.load_data_stream('/any/file/path')
+    mock_get.assert_called_once()
