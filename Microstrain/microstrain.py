@@ -29,12 +29,12 @@ unit.write_stream_data()
 """
 import enum
 import collections
-from dataclasses import dataclass
+import logging
 import packets
 import serial
 import struct
 import time
-from typing import Any, Optional
+from typing import BinaryIO, Optional, Union
 import os
 
 class FunctionSelectors(enum.Enum):
@@ -64,6 +64,9 @@ class Microstrain3DM:
     IMU_RATE = 500.0
     EKF_RATE = 500.0
     GPS_RATE = 4.0
+
+    # Supported baud rates.
+    BAUD_RATES = (9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600)
     
     def __init__(self, port: str ='COM5', baudrate: int = 115200):
         self._ser = serial.Serial(port=port, baudrate=baudrate)
@@ -76,18 +79,43 @@ class Microstrain3DM:
         self._ekf_fmt = None
         # This is storage for data collected during streaming.
         self._stream_results = None  # Packets received.
+        # Flush any leftovers.
+        self._ser.flush()
+
+    def _collect_packet_from_source(
+            self,
+            source: Union[BinaryIO, serial.Serial]) -> packets.MipsPacket:
+        """Collects packet from binary stream, used for files or serial.
+        
+        This allows for reuse of binary data reading from previously recorded
+        files or live serial data. Source will be either the class serial
+        object or a file descriptor.
+
+        Args:
+          source: the location of data, which has a read method.
+        Returns:
+          The next MipsPacket from the data stream.
+        """
+        sync = b''
+        # It would be nice to use read_until, but that's only available for
+        # serial objects, and this function is reused for data stored in files.
+        while tmp := source.read(1):
+            sync += tmp
+            if sync.endswith(packets.SYNC_MSG):
+                break
+        data = source.read(2)
+        desc_set, payload_len = struct.unpack('>BB', data)
+        payload = source.read(payload_len)
+        checksum = source.read(2)
+        field_data = packets.split_payload_to_fields(payload)
+        self._read_buffer.append(data + payload + checksum)
+        packet = packets.MipsPacket(desc_set, field_data)
+        return packet
     
     def _read_one_packet(self) -> packets.MipsPacket:
         """Returns the first MipsPacket found on the serial connection."""
-        self._ser.read_until(packets.SYNC_MSG)
-        desc_set = self._ser.read(1)
-        payload_len = self._ser.read(1)
-        payload = self._ser.read(int.from_bytes(payload_len, 'little'))
-        checksum = self._ser.read(2)
-        self._read_buffer.append(desc_set + payload_len + payload + checksum)
-        field_data = packets.split_payload_to_fields(payload)
-        packet = packets.MipsPacket(int.from_bytes(desc_set, 'little'),
-                                    field_data)
+        packet = self._collect_packet_from_source(self._ser)
+        packet.recv_time = time.time()
         return packet
     
     def _write(self, value: bytes):
@@ -169,7 +197,7 @@ class Microstrain3DM:
                     func_sel: FunctionSelectors = FunctionSelectors.NEW
     ) -> collections.namedtuple:
         """Sets baud rate on device."""
-        valid_rates = (9600, 19200, 115200, 230400, 460800, 921600)
+        valid_rates = self.BAUD_RATES
         if baud_rate not in valid_rates:
             raise ValueError(f'Baud rate must be one of {valid_rates}')
         if baud_rate != self._ser.baudrate:
@@ -359,7 +387,7 @@ class Microstrain3DM:
         if euler_vec is None:
             # Fetch angles from device.
             euler_vec = self.poll_data(descriptors=[0x0c])[0]
-        print(f'Initializing ekf with {euler_vec}')
+        logging.debug(f'Initializing ekf with {euler_vec}')
         vec_bytes = struct.pack('>fff', *euler_vec)
         cmd = packets.MipsPacket(
             0x0d, [packets.MipsField(0x0e, 0x02, data_bytes=vec_bytes)])
@@ -402,7 +430,7 @@ class Microstrain3DM:
         sample_bytes = struct.pack('>H', sample_duration_ms)
         cmd = packets.MipsPacket(
             0x0c, [packets.MipsField(0x04, 0x39, data_bytes=sample_bytes)])
-        print(f'Sleeping for {sample_duration_ms} ms to capture bias.')
+        logging.debug(f'Sleeping for {sample_duration_ms} ms to capture bias.')
         # Response will show up after the sleep period.
         response = self._send_command(cmd)
         # Return the ack + bias vector estimated by the filter.
@@ -415,6 +443,17 @@ class Microstrain3DM:
                                           [func_selector.value, mode.value])])
         data = self._send_and_parse_reply(cmd)
         return data[0]
+    
+    def get_single_packet(self) -> packets.MipsPacket:
+        """Gets and returns a single packet as a string if available.
+        
+        This method is intended for external callers to see if a packet is
+        available and grab it if so. If not it returns quickly to allow for
+        other async data collection elsewhere.
+        """
+        if self._ser.in_waiting:
+            new_packet = self._read_one_packet()
+            return new_packet
 
     def collect_data_stream(
             self,
@@ -433,19 +472,37 @@ class Microstrain3DM:
         """
         self.device_resume()
         t_end = time.time() + duration_sec
-        t_now = 0
+        logging.info(f'Will stop data collection at {t_end}')
         payload_recv = []
         while time.time() < t_end:
             # Read all packets available.
             while self._ser.in_waiting:
-                new_packet = self._read_one_packet()
-                new_packet.recv_time = time.time()
-                payload_recv.append(new_packet)
+                payload_recv.append(self.get_single_packet())
             time.sleep(0.001)
+            logging.debug('outer loop')
         self.device_idle()
         self._stream_results = payload_recv
-        
+        logging.debug('Microstrain stream complete.')
         return payload_recv
+    
+    def load_data_stream(self, file_path: str):
+        """Loads file of collected binary data into the class stream results.
+        
+        During data collection, the output of the device is logged as binary
+        data directly to disk for analysis later. This function allows the class
+        to be reloaded with a set of data, to take advantage of the write
+        functions defined for streams already.
+
+        Args:
+          file_path: the location of the binary file with microstrain data.
+        """
+        self._stream_results = []
+        logging.debug(f'Loading data stream from {file_path}.')
+        with open(file_path, 'rb') as f:
+            while t := f.read(8):
+                new_packet = self._collect_packet_from_source(f)
+                new_packet.recv_time = struct.unpack('>d', t)[0]
+                self._stream_results.append(new_packet)
     
     def _create_file_header_for_fmt(
             self,
