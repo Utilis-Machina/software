@@ -13,6 +13,7 @@ import collections
 from dataclasses import dataclass
 import enum
 import itertools
+import logging
 import struct
 from typing import Any, Optional
 
@@ -94,6 +95,7 @@ class MipsField:
         field_bytes += self.data_bytes
         return field_bytes
 
+
 @dataclass
 class MipsPacket:
     """Container for communication with the device.
@@ -114,10 +116,12 @@ class MipsPacket:
     payload: list[MipsField]
     recv_time: Optional[float] = None
 
-    def __init__(self, desc_set: int, payload: list[MipsField]):
+    def __init__(self, desc_set: int, payload: list[MipsField],
+                 recv_time: Optional[float] = None):
         self.desc_set = desc_set
         self.payload = payload
         self.payload_len = sum([len(f) for f in self.payload])
+        self.recv_time = recv_time
 
     @property
     def as_bytes(self) -> bytes:
@@ -142,6 +146,10 @@ class MipsPacket:
         """Flattens values in payload fields into a list."""
         processed_fields = self.convert_payload()
         return list(itertools.chain(*processed_fields))
+    
+    def as_log_str(self) -> str:
+        t = struct.pack('>d', self.recv_time)
+        return t + self.as_bytes
 
 def split_payload_to_fields(payload: bytes) -> list[MipsField]:
     """Takes payload bytes and divides them into fields."""
@@ -468,9 +476,11 @@ class ReplyFormats:
             0x03: 'error'
         }
         state_str = self._apply_decoder(mode_decoder, status.state)[0]
-        print(f'EKF in {state_str} phase.')
+        logging.debug(f'EKF in {state_str} phase.')
  
-        decoder = {0x01: init_decoder, 0x02: run_decoder}[status.state]
+        decoder = {0x01: init_decoder,
+                   0x02: run_decoder,
+                   0x03: run_decoder}[status.state]
         return self._apply_decoder(decoder, status.flags)
     
     @classmethod
