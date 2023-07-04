@@ -239,7 +239,7 @@ def run_experiment(args: argparse.Namespace):
     ins.device_baud(115200)
     # Disable data logging on power check.
     pwr.set_config(log_interval_s=0)
-    pwr.set_config(foreground_rgb=0xfff)  # Reset to default, white.
+    pwr.set_config(foreground_rgb=0xffff)  # Reset to default, white.
 
 if __name__ == "__main__":
     args = process_args()
