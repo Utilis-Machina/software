@@ -124,6 +124,7 @@ def prep_environment(args: argparse.Namespace) -> tuple[Any]:
     elif args.mode == 'sysid':
         # Configure high rate acquisition for system characterization.
         ins.set_msg_fmt(descriptors=[0x04, 0x05], rate_hz=[500.])
+        pwr.set_config(foreground_rgb=0x1f)  # Set screen blue to indicate sysid.
     elif args.mode == 'route':
         # Collect general telemetry during transport.
         # Prepare the filter.
@@ -146,6 +147,7 @@ def prep_environment(args: argparse.Namespace) -> tuple[Any]:
                         [0x01, 0x02, 0x08, 0x05, 0x0a, 0x0e, 0x17, 0x19], [1.])
         # Setup files for power output, since it writes directly.
         pwr.set_status_file(args.results_dir)
+        pwr.set_config(foreground_rgb=0x07e0)  # Set screen green to indicate route.
 
     return ins, pwr
 
@@ -237,6 +239,7 @@ def run_experiment(args: argparse.Namespace):
     ins.device_baud(115200)
     # Disable data logging on power check.
     pwr.set_config(log_interval_s=0)
+    pwr.set_config(foreground_rgb=0xfff)  # Reset to default, white.
 
 if __name__ == "__main__":
     args = process_args()
