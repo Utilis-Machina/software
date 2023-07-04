@@ -88,6 +88,7 @@ class PowerCheck:
         'fast_log_interval_ms',  # Values: 25-999, 0 to disable.
         # The next settings are related to the screen configuration,
         # and define the rgb colors of various features on PwrCheck+.
+        # The colors are specified in the RGB565 format.
         'foreground_rgb',
         'background_rgb',
         'volt_bar_graph_rgb',
