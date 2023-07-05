@@ -123,7 +123,7 @@ def prep_environment(args: argparse.Namespace) -> tuple[Any]:
         ins.device_baud(921600)
     elif args.mode == 'sysid':
         # Configure high rate acquisition for system characterization.
-        ins.set_msg_fmt(descriptors=[0x04, 0x05], rate_hz=[500.])
+        ins.set_msg_fmt(descriptors=[0x04, 0x05, 0x12], rate_hz=[250.])
         pwr.set_config(foreground_rgb=0x1f)  # Set screen blue to indicate sysid.
     elif args.mode == 'route':
         # Collect general telemetry during transport.
