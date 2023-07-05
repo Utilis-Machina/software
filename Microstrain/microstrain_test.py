@@ -10,7 +10,7 @@ def serial_mock():
         yield _fixture
 
 def test_read_one_packet():
-    packet = b'\x01\x0a\x04\xf1\x05\x00\x06\x83\x01\x02\x03\x04\x68\x7d'
+    packet = b'\x01\x0a\x04\xf1\x05\x00\x06\x83\x01\x02\x03\x04\x72\x91'
     unit = microstrain.Microstrain3DM()
     # Slice the read sequence from the packet to make sure they all are
     # read as bytes instead of ints.
