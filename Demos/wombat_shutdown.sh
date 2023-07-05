@@ -7,7 +7,7 @@
 echo "System temperature is $(vcgencmd measure_temp)"
 
 # Wait for keypress of requested duration.
-/home/utilis/wombat_gpio_monitor.sh 8 1 "8sec Shutdown Press"
+/home/utilis/Demos/wombat_gpio_monitor.sh 8 1 "8sec Shutdown Press"
 
 # Send an interrupt and wait for the process to complete.
 PID=`pgrep python3`
