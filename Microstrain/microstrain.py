@@ -84,7 +84,7 @@ class Microstrain3DM:
 
     def _collect_packet_from_source(
             self,
-            source: Union[BinaryIO, serial.Serial]) -> packets.MipsPacket:
+            source: Union[BinaryIO, serial.Serial]) -> Optional[packets.MipsPacket]:
         """Collects packet from binary stream, used for files or serial.
         
         This allows for reuse of binary data reading from previously recorded
@@ -110,12 +110,18 @@ class Microstrain3DM:
         field_data = packets.split_payload_to_fields(payload)
         self._read_buffer.append(data + payload + checksum)
         packet = packets.MipsPacket(desc_set, field_data)
-        return packet
+        if packet.as_bytes[-2:] == checksum:
+            # Packet recreated matches expected checksum.
+            return packet
+        else:
+            logging.info('Invalid packet %s', packet.as_bytes)
+            return None
     
-    def _read_one_packet(self) -> packets.MipsPacket:
+    def _read_one_packet(self) -> Optional[packets.MipsPacket]:
         """Returns the first MipsPacket found on the serial connection."""
         packet = self._collect_packet_from_source(self._ser)
-        packet.recv_time = time.time()
+        if packet is not None:
+            packet.recv_time = time.time()
         return packet
     
     def _write(self, value: bytes):
