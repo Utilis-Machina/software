@@ -3,7 +3,7 @@
 # kicks off data collection of the equipment for the experiment.
 
 # Home base for all data and scripts.
-SCRIPT_DIR=/home/utilis
+SCRIPT_DIR=/home/utilis/Demos
 
 # First, block until the press is registered, 3 counts with 0.5 sec sleeps.
 ${SCRIPT_DIR}/wombat_gpio_monitor.sh 3 0.5 "telemetry begin"
@@ -17,7 +17,7 @@ wombat_devs="-ustrain_port=/dev/ustrain -pwrcheck_port=/dev/PwrCheck"
 wombat_cmds=("prep"
   "ready"
   "route -remove_bias -collection_sec 10"
-  "sysid -collection_sec 60"
+  "sysid -collection_sec 10"
 )
 
 # Create results variable for today's date.
