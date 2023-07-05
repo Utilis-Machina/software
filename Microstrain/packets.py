@@ -138,8 +138,11 @@ class MipsPacket:
         """Converts payload fields to their respective objects."""
         entries = []
         for f in self.payload:
-            value = ReplyFormats.process_field(self.desc_set, f)
-            entries.append(value)
+            try:
+              value = ReplyFormats.process_field(self.desc_set, f)
+              entries.append(value)
+            except KeyError:
+              logging.debug('Failed to process field %s', f.data)
         return entries
     
     def flatten_payload(self) -> list[Any]:
