@@ -16,8 +16,20 @@ wombat_devs="-ustrain_port=/dev/ustrain -pwrcheck_port=/dev/PwrCheck"
 # Commands to cycle through during the experiment.
 wombat_cmds=("prep"
   "ready"
-  "route -remove_bias -collection_sec 10"
-  "sysid -collection_sec 10"
+  "route -remove_bias -collection_sec 3600"
+  "sysid -collection_sec 60"
+  "route -collection_sec 3600"
+  "sysid -collection_sec 60"
+  "route -collection_sec 3600"
+  "sysid -collection_sec 60"
+  "route -collection_sec 3600"
+  "sysid -collection_sec 60"
+  "route -collection_sec 3600"
+  "sysid -collection_sec 60"
+  "route -collection_sec 3600"
+  "sysid -collection_sec 60"
+  "route -collection_sec 3600"
+  "sysid -collection_sec 60"
 )
 
 # Create results variable for today's date.
@@ -33,4 +45,4 @@ do
   python3 ${full_cmd}
 done
 
-echo "Data collection complete!"
+echo "Data collection complete at $(date)!"
