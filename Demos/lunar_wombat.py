@@ -114,7 +114,7 @@ def prep_environment(args: argparse.Namespace) -> tuple[Any]:
     logging.info(f'Prepping system for {args.mode} operation.')
     if args.mode == 'prep':
         # Configure data storage on power check as a backup.
-        pwr.set_config(log_interval_s=5,  # Log power every 5 seconds.
+        pwr.set_config(log_interval_s=1,  # Log power every 1 seconds.
                        foreground_rgb=0xf800)  # Set foreground color red.  
         # Clear formats just in case.
         ins.reset_msg_fmt(packets.DataMessages.IMU)
@@ -238,9 +238,8 @@ def run_experiment(args: argparse.Namespace):
     ins.write_stream_data(get_results_dir_path(args))
     # Restore baud to default.
     ins.device_baud(115200)
-    # Disable data logging on power check.
-    pwr.set_config(log_interval_s=0)
-    pwr.set_config(foreground_rgb=0xffff)  # Reset to default, white.
+    # Reset screen foreground color to white, leave logging to EEPROM going.
+    pwr.set_config(foreground_rgb=0xffff)
 
 if __name__ == "__main__":
     args = process_args()
