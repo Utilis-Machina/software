@@ -1,4 +1,9 @@
-r"""Simple binary to test power_check functionality with PWRCheck+ HW."""
+r"""Simple binary to test power_check functionality with PWRCheck+ HW.
+
+Sample call:
+  # To dump eeprom to a file.
+  python3 ./run_power_check.py -dump eeprom_values.txt 
+"""
 import argparse
 import power_check
 import sys
@@ -30,7 +35,7 @@ if __name__ == '__main__':
     parser.add_argument('-over_voltage', type=int, dest='over_voltage',
                         help='Sets over voltage alarm limit.')
     # These are the longer interactive modes.
-    parser.add_argument('-dump', '-d', action='store_true',
+    parser.add_argument('-dump', '-d', default=None,
                         help='Dumps logged data from EEPROM.')
     parser.add_argument('-stream_status', action='store_true',
                         help='Logs and writes data to file.')
@@ -69,10 +74,15 @@ if __name__ == '__main__':
         print(f'Streaming values to file.')
         unit.set_status_file('./')
         unit.stream_status(num_samples=args.samples)
-    elif args.dump:
+    elif args.dump is not None:
         print(f'Dumping EEPROM from unit.')
         eeprom_data = unit.dump_eeprom()
-        print(f'Found {len(eeprom_data)} values: {eeprom_data}')
+        # Write values to file provided.
+        with open(args.dump, 'w') as f:
+            f.write('Voltage (mV),Current (mA)\n')  # Write file header.
+            for row in eeprom_data:
+                f.write(','.join(map(str, row)) + '\n')
+        print(f'Found {len(eeprom_data)} values. Wrote to {args.dump}')
     elif args.logging_sec is not None:
         print(f'Applying logging interval of {args.logging_sec}')
         unit.set_config(log_interval_s=args.logging_sec)
