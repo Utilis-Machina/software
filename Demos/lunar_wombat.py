@@ -26,6 +26,7 @@ python3 ./lunar_wombat.py -mode route -results_dir ./data -remove_bias
 import argparse
 import asyncio
 import logging
+import json
 import microstrain
 import os
 import packets
@@ -34,18 +35,42 @@ import sys
 from typing import Any
 import time
 
-# Name of file to hold the binary traffic from the microstrain device.
+# File to hold the binary traffic from the microstrain device.
 INS_FILE = 'ins_raw.txt'
+# File that holds the config used for this data collection.
+INS_FMT = 'ins_fmt.txt'
 # The other raw data set from the run is the logging messages.
 LOG_FILE = 'log.txt'
 
+# Set configs here to provide a single location for easier management.
+# This dictionary is for each of the INS message types, and broken down by 
+# type of data collection. We use the value so that json can dump the config.
+ROUTE = 'route'
+SYS_ID = 'sysid'
+INS_EXP_DATA = {
+    ROUTE: {
+        # Delta theta vec, Delta Vel vec, CF Accel vector, gps time, euler. 
+        'IMU': ([0x07, 0x08, 0x11, 0x12, 0x0c], [1.]),
+        # LLH position, GPS time.
+        'GPS': ([0x03, 0x09], [1.]),
+        # LLH, NED velocity, LLH uncertainty + Euler angles,
+        # angular rate, gps time, accel scale factor and uncertainty.
+        'EKF': ([0x01, 0x02, 0x08, 0x05, 0x0a, 0x0e, 0x11, 0x17, 0x19], [1.])
+    },
+    SYSID: {
+        # Accel + gyro vec, GPS time.
+        'IMU': ([0x04, 0x05, 0x12], [250.])
+    },
+}
+
+print(INS_EXP_DATA)
 
 def create_parser() -> argparse.ArgumentParser:
     """Creates an argument parser to manage flags for the experiment."""
     parser = argparse.ArgumentParser()
     # Operational phase data collection.
     parser.add_argument('-mode', type=str,
-                      choices=['prep', 'ready', 'sysid', 'route'])
+                      choices=['prep', 'ready', SYS_ID, ROUTE])
     # Experimental config.
     parser.add_argument('-collection_sec', type=float, default=5.0,
                     help='Number of seconds to collect data for.')
@@ -59,6 +84,8 @@ def create_parser() -> argparse.ArgumentParser:
                         help=('Specify port for machine'))
     parser.add_argument('-pwrcheck_port', default='/dev/PwrCheck',
                         help=('Specify port for machine'))
+    parser.add_argument('-record_format', type=bool, default=True,
+                        help='Write out the config used for microstrain.')
     # Process flags.
     parser.add_argument('-remove_bias', action='store_true',
                         help='Estimate gyro bias (at rest) for navigation.')
@@ -111,6 +138,8 @@ def prep_environment(args: argparse.Namespace) -> tuple[Any]:
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
 
+    # Placeholder for format, if used.
+    ustrain_config = {}
     logging.info(f'Prepping system for {args.mode} operation.')
     if args.mode == 'prep':
         # Configure data storage on power check as a backup.
@@ -122,11 +151,11 @@ def prep_environment(args: argparse.Namespace) -> tuple[Any]:
         ins.reset_msg_fmt(packets.DataMessages.EKF)
         # Set max rate for data collection.
         ins.device_baud(921600)
-    elif args.mode == 'sysid':
-        # Configure high rate acquisition for system characterization.
-        ins.set_msg_fmt(descriptors=[0x04, 0x05, 0x12], rate_hz=[250.])
+    elif args.mode == SYS_ID:
+        # Get config for high rate acquisition for system characterization.
+        ustrain_config = INS_EXP_DATA[SYS_ID]
         pwr.set_config(foreground_rgb=0x1f)  # Set screen blue to indicate sysid.
-    elif args.mode == 'route':
+    elif args.mode == ROUTE:
         # Collect general telemetry during transport.
         # Prepare the filter.
         if args.remove_bias:
@@ -137,18 +166,22 @@ def prep_environment(args: argparse.Namespace) -> tuple[Any]:
                               microstrain.FunctionSelectors.NEW)
         # Use complimentary filter euler angles to initialize attitude.
         ins.ekf_euler_init()
-        # Configure data for streaming.
-        # CF Accel vector.
-        ins.set_msg_fmt(packets.DataMessages.IMU, [0x11], [1.])
-        # LLH position, GPS time.
-        ins.set_msg_fmt(packets.DataMessages.GPS, [0x03, 0x09], [1.])
-        # LLH, NED velocity, LLH uncertainty + Euler angles,
-        # angular rate, accel scale factor and uncertainty.
-        ins.set_msg_fmt(packets.DataMessages.EKF,
-                        [0x01, 0x02, 0x08, 0x05, 0x0a, 0x0e, 0x17, 0x19], [1.])
+        # Get config for lower data route over long time periods.
+        ustrain_config = INS_EXP_DATA[ROUTE]
         # Setup files for power output, since it writes directly.
         pwr.set_status_file(args.results_dir)
         pwr.set_config(foreground_rgb=0x07e0)  # Set screen green to indicate route.
+
+    # If a config defined for collection, send it here.
+    if ustrain_config:
+        for msg_type, msgs in ustrain_config.items():
+            descriptors, rate_hz = msgs  # Unpack data format.
+            logging.info('Setting %s: %s at %s', msg_type, descriptors, rate_hz)
+            ins.set_msg_fmt(packets.DataMessages[msg_type], descriptors, rate_hz)
+        
+        if args.record_format:
+            with open(get_ins_format_file(args), 'w') as f:
+                f.write(json.dumps(ustrain_config))
 
     return ins, pwr
 
@@ -189,6 +222,11 @@ async def print_timer(args: argparse.Namespace, num_updates: int = 10):
 def get_ins_file(args) -> str:
     """Returns the full system path to the raw data file for microstrain."""
     return os.path.join(get_results_dir_path(args), INS_FILE)
+
+
+def get_ins_format_file(args) -> str:
+    """Returns the full system path to the data format file for microstrain."""
+    return os.path.join(get_results_dir_path(args), INS_FMT)
 
 
 async def ins_data(ins: microstrain.Microstrain3DM, args: argparse.Namespace):
@@ -247,6 +285,7 @@ if __name__ == "__main__":
 
     if args.mode == 'ready':
         system_ready(ins)
+
 
     # Run data collection if requested.
     if args.mode in ['sysid', 'route']:
