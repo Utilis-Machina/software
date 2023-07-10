@@ -57,7 +57,7 @@ INS_EXP_DATA = {
         # angular rate, gps time, accel scale factor and uncertainty.
         'EKF': ([0x01, 0x02, 0x08, 0x05, 0x0a, 0x0e, 0x11, 0x17, 0x19], [1.])
     },
-    SYSID: {
+    SYS_ID: {
         # Accel + gyro vec, GPS time.
         'IMU': ([0x04, 0x05, 0x12], [250.])
     },
