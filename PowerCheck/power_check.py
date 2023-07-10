@@ -121,8 +121,8 @@ class PowerCheck:
     )
 
     # Selects values from the status message to log to file when streaming.
-    _LOG_VALUES = ('calibrated_voltage_mv', 'calibrated_current_ma', 'ma_hours',
-                   'quality_mv', 'forward_ma_hrs', 'reverse_ma_hrs')
+    _LOG_VALUES = ('voltage_mv', 'current_ma', 'calibrated_voltage_mv', 'calibrated_current_ma',
+                   'ma_hours', 'quality_mv', 'forward_ma_hrs', 'reverse_ma_hrs')
 
     def __init__(self, port: str = 'COM3', baudrate: int = 115200,
                  monitor_file_location: Optional[str] = None):
