@@ -69,7 +69,10 @@ class Microstrain3DM:
     BAUD_RATES = (9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600)
     
     def __init__(self, port: str ='COM5', baudrate: int = 115200):
-        self._ser = serial.Serial(port=port, baudrate=baudrate)
+        if port is not None:
+            self._ser = serial.Serial(port=port, baudrate=baudrate)
+            # Flush any leftovers.
+            self._ser.flush()
         # These are for debugging the raw traffic.
         self._read_buffer = collections.deque(maxlen=10)
         self._write_buffer = collections.deque(maxlen=10)
@@ -79,8 +82,6 @@ class Microstrain3DM:
         self._ekf_fmt = None
         # This is storage for data collected during streaming.
         self._stream_results = None  # Packets received.
-        # Flush any leftovers.
-        self._ser.flush()
 
     def _collect_packet_from_source(
             self,
@@ -103,19 +104,23 @@ class Microstrain3DM:
             sync += tmp
             if sync.endswith(packets.SYNC_MSG):
                 break
-        data = source.read(2)
-        desc_set, payload_len = struct.unpack('>BB', data)
-        payload = source.read(payload_len)
-        checksum = source.read(2)
-        field_data = packets.split_payload_to_fields(payload)
-        self._read_buffer.append(data + payload + checksum)
-        packet = packets.MipsPacket(desc_set, field_data)
-        if packet.as_bytes[-2:] == checksum:
-            # Packet recreated matches expected checksum.
-            return packet
-        else:
-            logging.info('Invalid packet %s', packet.as_bytes)
+        try:
+            data = source.read(2)
+            desc_set, payload_len = struct.unpack('>BB', data)
+            payload = source.read(payload_len)
+            checksum = source.read(2)
+            field_data = packets.split_payload_to_fields(payload)
+            self._read_buffer.append(data + payload + checksum)
+            packet = packets.MipsPacket(desc_set, field_data)
+            if packet.as_bytes[-2:] == checksum:
+                # Packet recreated matches expected checksum.
+                return packet
+            else:
+                logging.info('Invalid packet %s', packet.as_bytes)
+                return None
+        except struct.error:
             return None
+            
     
     def _read_one_packet(self) -> Optional[packets.MipsPacket]:
         """Returns the first MipsPacket found on the serial connection."""
@@ -276,7 +281,7 @@ class Microstrain3DM:
         num_descriptors = len(descriptors)
         desc_hz = (rate_hz if num_descriptors == len(rate_hz)
             else num_descriptors * list(rate_hz))
-        self._add_descriptors_and_rates(msg_type, descriptors, desc_hz)
+        self.add_descriptors_and_rates(msg_type, descriptors, desc_hz)
         fmt_payload = self._generate_field_for_descriptors(
             msg_type.fmt_cmd, self._get_max_rate(msg_type),
             FunctionSelectors.NEW.value, descriptors, desc_hz)
@@ -284,7 +289,7 @@ class Microstrain3DM:
             packets.MipsPacket(0x0c, [fmt_payload]))
         return data[0]
     
-    def _add_descriptors_and_rates(self, msg_type: packets.DataMessages,
+    def add_descriptors_and_rates(self, msg_type: packets.DataMessages,
                                    descriptors: list[int],
                                    desc_hz: list[float]):
         """Stores descriptors for message type to help divide data later.
@@ -505,10 +510,11 @@ class Microstrain3DM:
         self._stream_results = []
         logging.debug(f'Loading data stream from {file_path}.')
         with open(file_path, 'rb') as f:
-            while t := f.read(8):
+            while t := f.read(8):  # Read double precision time.
                 new_packet = self._collect_packet_from_source(f)
-                new_packet.recv_time = struct.unpack('>d', t)[0]
-                self._stream_results.append(new_packet)
+                if new_packet is not None:
+                    new_packet.recv_time = struct.unpack('>d', t)[0]
+                    self._stream_results.append(new_packet)
     
     def _create_file_header_for_fmt(
             self,
