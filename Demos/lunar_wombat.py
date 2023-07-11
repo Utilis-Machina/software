@@ -20,8 +20,9 @@ together. If for some reason data collection needs to end early it is OK to
 terminate the program with a SIGINT. Generally, try to run this in a screen
 program (like tmux) or via nohup over ssh to allow for easy interrupts.
 
-Sample call:
+Sample calls:
 python3 ./lunar_wombat.py -mode route -results_dir ./data -remove_bias
+python3 ./lunar_wombat.py -reprocess -results_dir ./route 
 """
 import argparse
 import asyncio
@@ -63,7 +64,6 @@ INS_EXP_DATA = {
     },
 }
 
-print(INS_EXP_DATA)
 
 def create_parser() -> argparse.ArgumentParser:
     """Creates an argument parser to manage flags for the experiment."""
@@ -71,6 +71,8 @@ def create_parser() -> argparse.ArgumentParser:
     # Operational phase data collection.
     parser.add_argument('-mode', type=str,
                       choices=['prep', 'ready', SYS_ID, ROUTE])
+    parser.add_argument('-reprocess', action='store_true',
+                        help='Reprocess a previous binary data file.')
     # Experimental config.
     parser.add_argument('-collection_sec', type=float, default=5.0,
                     help='Number of seconds to collect data for.')
@@ -155,6 +157,7 @@ def prep_environment(args: argparse.Namespace) -> tuple[Any]:
         # Get config for high rate acquisition for system characterization.
         ustrain_config = INS_EXP_DATA[SYS_ID]
         pwr.set_config(foreground_rgb=0x1f)  # Set screen blue to indicate sysid.
+        pwr.set_status_file(args.results_dir)
     elif args.mode == ROUTE:
         # Collect general telemetry during transport.
         # Prepare the filter.
@@ -279,16 +282,37 @@ def run_experiment(args: argparse.Namespace):
     # Reset screen foreground color to white, leave logging to EEPROM going.
     pwr.set_config(foreground_rgb=0xffff)
 
+def reprocess_ustrain_data(args):
+    """Load and process a previously created ustrain binary file."""
+    # Load the file format.
+    logging.info('Reprocessing data from %s', args.results_dir)
+    with open(get_ins_format_file(args), 'r') as f:
+        ustrain_config = json.load(f)
+    # Configure the ustrain object.
+    logging.info('Using config: %s', ustrain_config)
+    ins = microstrain.Microstrain3DM(port=None)
+    # Load the configuration for stream processing later.
+    for msg_type, msgs in ustrain_config.items():
+        descriptors, rate_hz = msgs
+        ins.add_descriptors_and_rates(packets.DataMessages[msg_type],
+                                      descriptors, rate_hz)
+    # Follow the usual flow to generate data files.
+    ins.load_data_stream(get_ins_file(args))
+    ins.write_stream_data(get_results_dir_path(args))
+
 if __name__ == "__main__":
     args = process_args()
-    ins, pwr = prep_environment(args)
+    if args.reprocess:
+        reprocess_ustrain_data(args)
+        logging.info('Data reprocessing complete!')
+    else:
+        ins, pwr = prep_environment(args)
 
-    if args.mode == 'ready':
-        system_ready(ins)
+        if args.mode == 'ready':
+            system_ready(ins)
 
+        # Run data collection if requested.
+        if args.mode in ['sysid', 'route']:
+            run_experiment(args)
 
-    # Run data collection if requested.
-    if args.mode in ['sysid', 'route']:
-        run_experiment(args)
-
-    logging.info('Data collection complete!')
+        logging.info('Data collection complete!')
