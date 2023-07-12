@@ -31,6 +31,7 @@ available device. The code was tested on windows and linux, using the
 FW version 1.27.
 """
 import collections
+import enum
 import logging
 import os
 import serial
@@ -39,6 +40,18 @@ import time
 from typing import Optional
 
 NACK_SLEEP = 0.2
+
+# List of screens possible to display on PowerCheck+.
+class Screens(enum.Enum):
+     VOLTS = 0
+     AMPS = 1
+     WATTS = 2
+     AMP_HR = 3
+     AMP_HR_GAUGE = 4
+     VOLTS_GRAPH = 5
+     AMPS_GRAPH = 6
+     LOG = 7
+     SETTINGS = 8
 
 
 class PowerCheck:
@@ -120,9 +133,12 @@ class PowerCheck:
         'reverse_ma_hrs']  # Load to source flow.
     )
 
+
+
     # Selects values from the status message to log to file when streaming.
-    _LOG_VALUES = ('voltage_mv', 'current_ma', 'calibrated_voltage_mv', 'calibrated_current_ma',
-                   'ma_hours', 'quality_mv', 'forward_ma_hrs', 'reverse_ma_hrs')
+    _LOG_VALUES = ('voltage_mv', 'current_ma', 'calibrated_voltage_mv',
+                   'calibrated_current_ma', 'ma_hours', 'quality_mv',
+                   'forward_ma_hrs', 'reverse_ma_hrs')
 
     def __init__(self, port: str = 'COM3', baudrate: int = 115200,
                  monitor_file_location: Optional[str] = None):
@@ -334,6 +350,24 @@ class PowerCheck:
         self._last_config = self._packet_handshake(
             0xa4, self.CONFIG_FMT, self.Config)
         return self._last_config
+    
+    def set_screen(self, screen: Screens):
+        """Changes display of display screen to one requested.
+        
+        Note - this is only available in version 1.28 and later of the firmware.
+        Depending on the settings on the device it may not be able to show the
+        screen. For example if logging is not enabled, you will not be able to
+        go to the log screen and the display will stay the same.
+        
+        Args:
+          screen: which screen to set the device to.
+        """
+        packet_type = 0xad
+        payload = struct.pack('<B', screen.value)
+        request = self._make_packet(packet_type, payload)
+        self._write(request)
+        time.sleep(NACK_SLEEP)
+        accept = self._read_one_packet()  # Acceptance of command.
 
     def set_config(self, **kwargs):
         """Sets configuration items provided from config namedtuple.
