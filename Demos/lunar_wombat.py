@@ -146,7 +146,8 @@ def prep_environment(args: argparse.Namespace) -> tuple[Any]:
     if args.mode == 'prep':
         # Configure data storage on power check as a backup.
         pwr.set_config(log_interval_s=1,  # Log power every 1 seconds.
-                       foreground_rgb=0xf800)  # Set foreground color red.  
+                       foreground_rgb=0xf800)  # Set foreground color red.
+        pwr.set_screen(power_check.Screens.AMPS)  # Advance to amps display.
         # Clear formats just in case.
         ins.reset_msg_fmt(packets.DataMessages.IMU)
         ins.reset_msg_fmt(packets.DataMessages.GPS)
