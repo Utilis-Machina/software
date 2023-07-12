@@ -120,6 +120,12 @@ def test_set_config_makes_correct_packet_multi_settings(mocker):
     assert mock_packet.call_args_list[0] == mock.call(0xa6, expected_payload)
  
 @pytest.mark.byte_tests
+def test_set_screen_sends_proper_message():
+    unit = power_check.PowerCheck()
+    unit.set_screen(power_check.Screens.AMPS)
+    unit._ser.write.assert_called_with(b'\x80\x03\xad\x01\xb1')
+
+@pytest.mark.byte_tests
 def test_clear_log_sends_proper_message():
     unit = power_check.PowerCheck()
     unit.clear_log_data()
