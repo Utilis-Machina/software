@@ -226,13 +226,13 @@ class PowerCheck:
         # Read one packet at a time until we reach EOF.
         while cur_packet.payload:
             time.sleep(0.001)
-            cur_packet = self._read_one_packet(type=0xa3)
+            cur_packet = self._read_one_packet(0xa3)
             data.append(cur_packet.payload)
             self._write(nack_accept)
             self._write(nack_complete)
         return self._process_dump_raw_data(data)
 
-    def _read_one_packet(self, type: Optional[int] = None) -> PacketInfo:
+    def _read_one_packet(self, packet_type: Optional[int] = None) -> PacketInfo:
         """Reads one packet from the device.
         
         Thif function will either receive the first packet available, or
@@ -243,6 +243,8 @@ class PowerCheck:
         Return:
           The PacketInfo (type and payload) of the response.
         """
+        # Placeholder in case there are issues.
+        packet_result = self.PacketInfo(0x0, 0x0)
         while 1:
             # Read to start of packet.
             self._ser.read_until(b'\x80')
@@ -250,15 +252,24 @@ class PowerCheck:
             packet_data = self._ser.read(int.from_bytes(packet_len, 'little'))
             packet_checksum = packet_data[-1]
             # Validate all data received.
-            if packet_checksum != sum(packet_len + packet_data[:-1]) & 0xff:
-                error = f'Checksum mismatch: {packet_len + packet_data}'
+            checksum_received = sum(packet_len + packet_data[:-1])
+            if packet_checksum != (checksum_received & 0xff):
+                full_packet = b'\x80' + packet_len + packet_data
+                error = f'Checksum mismatch: {full_packet}'
                 logging.warning(error)
+                logging.debug(f'Expected checksum: {packet_checksum}')
+                logging.debug(f'Received checksum: {checksum_received}')
                 time.sleep(0.25)  # Sleep to trigger a resend.
             else:
                 self._read_buffer.append(packet_len + packet_data)
-            # Separate the type and remove the checksum from the end.
-            packet_result = self.PacketInfo(packet_data[0], packet_data[1:-1])
-            if packet_result.type == type or type is None:
+                # Separate the type and remove the checksum from the end.
+                packet_result = self.PacketInfo(packet_data[0],
+                                                packet_data[1:-1])
+                # Check if it's the right packet, and break if so.
+                if packet_result.type == packet_type:
+                    break
+            # If we don't care about the packet exit.
+            if packet_type is None:
                 break
         return packet_result
 
@@ -399,7 +410,11 @@ class PowerCheck:
             self._last_config = new_config
 
     def get_status(self) -> Status:
-        """Gets measurements status (0xa0) measured on device."""
+        """Gets measurements status (0xa0) measured on device.
+        
+        Note - these values are updated about every 300ms, so polling faster
+        than that could result in duplicate data.
+        """
         self._last_status = self._packet_handshake(
             0xa0, self.STATUS_FMT, self.Status)
         return self._last_status
