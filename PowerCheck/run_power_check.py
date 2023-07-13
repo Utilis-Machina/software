@@ -3,6 +3,8 @@ r"""Simple binary to test power_check functionality with PWRCheck+ HW.
 Sample call:
   # To dump eeprom to a file.
   python3 ./run_power_check.py -dump eeprom_values.txt 
+  # To adjust the screen displayed.
+  python3 ./run_power_check.py -screen 1
 """
 import argparse
 import power_check
@@ -34,6 +36,8 @@ if __name__ == '__main__':
                         help='Sets logging interval')
     parser.add_argument('-over_voltage', type=int, dest='over_voltage',
                         help='Sets over voltage alarm limit.')
+    parser.add_argument('-screen', type=int, dest='screen',
+                        help='Advance to screen selected.')
     # These are the longer interactive modes.
     parser.add_argument('-dump', '-d', default=None,
                         help='Dumps logged data from EEPROM.')
@@ -94,6 +98,10 @@ if __name__ == '__main__':
         unit.set_config(over_voltage_mv=args.over_voltage)
         print('Verifying new setting.')
         print(unit.get_config())
+    elif args.screen is not None:
+        new_screen = power_check.Screens(args.screen)
+        print(f'Changing screen to {new_screen}')
+        unit.set_screen(new_screen)
 
     # For viewing the raw traffic from the command.
     if args.raw:
