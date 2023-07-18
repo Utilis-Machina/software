@@ -36,6 +36,9 @@ import sys
 from typing import Any
 import time
 
+# Software version to store in log files.
+VER = '1.0'
+
 # File to hold the binary traffic from the microstrain device.
 INS_FILE = 'ins_raw.txt'
 # File that holds the config used for this data collection.
@@ -302,6 +305,7 @@ def reprocess_ustrain_data(args):
     ins.write_stream_data(get_results_dir_path(args))
 
 if __name__ == "__main__":
+    logging.info('Running software version: %s', VER)
     args = process_args()
     if args.reprocess:
         reprocess_ustrain_data(args)
