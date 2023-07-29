@@ -5,8 +5,14 @@
 # Home base for all data and scripts.
 SCRIPT_DIR=/home/utilis/Demos
 
-# First, block until the press is registered, 3 counts with 0.5 sec sleeps.
-${SCRIPT_DIR}/wombat_gpio_monitor.sh 3 0.5 "telemetry begin"
+# Check to see if triggering is requested for the data collection.
+# To bypass, set this variable in the shell, i.e. export BYPASS=True
+if [[ -v BYPASS ]]; then
+  echo "Data collection will begin immediately."
+else
+  # Block until the button press is registered, 3 counts with 0.5 sec sleeps.
+  ${SCRIPT_DIR}/wombat_gpio_monitor.sh 3 0.5 "telemetry begin"
+fi
 
 echo "Starting data collection at $(date)"
 
