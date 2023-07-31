@@ -262,7 +262,7 @@ class ReplyFormats:
         'year', 'month', 'day', 'hour', 'minute', 'second', 'msec', 'flags'
     ])
     GPSTime = collections.namedtuple('GPSTime', [
-        'tow', 'week_num', 'flags'
+        'time_of_week', 'week_num', 'flags'
     ])
     ClockInfo = collections.namedtuple('ClockInfo', [
         'clock_bias', 'clock_drift', 'acc_est', 'flags'
