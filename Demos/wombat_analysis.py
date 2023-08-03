@@ -257,7 +257,6 @@ def plot_route(path: str, make_kml: bool = False):
     ax.set_ylabel(y)
     ax.set_zlabel(z)
     plt.savefig(f'{path}/plot_3d.png')
-    plt.close('all')
 
     if make_kml:
         # Make a kml file using the gps data loaded.
@@ -289,20 +288,21 @@ if __name__ == '__main__':
         print('Batch processing.')
 
     for path in paths:
-      print(f'Processing path: {path}')
-      try:
-        # Power system values during the run, should always be available.
-        pwr_df = load_pwrcheck_dataframe(path)
-        plot_power_dataframe(pwr_df, path)
+        print(f'Processing path: {path}')
+        try:
+            # Power system values during the run, should always be available.
+            pwr_df = load_pwrcheck_dataframe(path)
+            plot_power_dataframe(pwr_df, path)
 
-        # Custom plotting based on collection type.
-        if 'sysid' in path:
-            plot_sysid(path)
-        elif 'route' in path:
-            plot_route(path, args.kml_file)
-        else:
-            print(f'SKIP unsupported run type.')
-      except (KeyError, AttributeError) as e:
-          # Let user know what went wrong for further investigation.
-          print(f'FAIL with {type(e).__name__}')
-          print(e)
+            # Custom plotting based on collection type.
+            if 'sysid' in path:
+                plot_sysid(path)
+            elif 'route' in path:
+                plot_route(path, args.kml_file)
+            else:
+                print(f'SKIP unsupported run type.')
+            plt.close('all')  # Close any opened figures to free memory.
+        except (KeyError, AttributeError) as e:
+            # Let user know what went wrong for further investigation.
+            print(f'FAIL with {type(e).__name__}')
+            print(e)
