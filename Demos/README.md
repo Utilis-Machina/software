@@ -43,6 +43,10 @@ flowchart TD;
 The Raspberry Pi is the main computer, which runs the Python executable [lunar_wombat](lunar_wombat.py) via a shell [script](wombat_data.sh).
 The script is managed by systemd and is triggered via the General Purpose Input and Output (GPIO) of the RPi.
 
+To stay flexible with onsite operations, the code requires a manual trigger to initiate the sequence of data collection A series of commands is run to collect
+data during the different modes of operation - system characterization or general telemetry collection. Logs are collected via systemd to allow for analysis of
+errors during operations.
+
 Power telemetry is collected from at 1 Hz from a PwrCheck+ device in this [repository](../PowerCheck). The Microstrain device collects inertial and environmental
 data at rates of up to 500 Hz for certain measurands: accelerometer, gyro, magnetometer, GPS, pressure, etc. That code is also available in the [repository](../Microstrain).
 
